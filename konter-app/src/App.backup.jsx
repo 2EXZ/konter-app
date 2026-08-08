@@ -45,20 +45,8 @@ const seedData = () => ({
     { id: uid(), username: "owner", password: "owner123", name: "Pemilik Konter", role: "owner" },
     { id: uid(), username: "kasir1", password: "kasir123", name: "Karyawan Kasir", role: "karyawan" },
   ],
-  storeName: "Konter Jaya Cell",
+  storeName: "Dhell Cell",
 });
-
-const useIsMobile = (breakpoint = 860) => {
-  const [isMobile, setIsMobile] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth < breakpoint : false
-  );
-  useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth < breakpoint);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, [breakpoint]);
-  return isMobile;
-};
 
 const NAV = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["owner", "karyawan"] },
@@ -76,8 +64,6 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [page, setPage] = useState("dashboard");
   const [toast, setToast] = useState(null);
-  const isMobile = useIsMobile();
-  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -123,114 +109,68 @@ export default function App() {
 
   const visibleNav = NAV.filter((n) => n.roles.includes(currentUser.role));
 
-  const NavContent = () => (
-    <>
-      <div style={{ padding: "20px 18px", display: "flex", alignItems: "center", gap: 10, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-        <div style={{ width: 34, height: 34, borderRadius: 9, background: "#1FAE7A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <Store size={18} color="#0B1526" />
-        </div>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 14.5, color: "#fff", lineHeight: 1.1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{data.storeName}</div>
-          <div style={{ fontSize: 11, color: "#7D8CA3" }}>Sistem Kasir Konter</div>
-        </div>
-        {isMobile && (
-          <button onClick={() => setDrawerOpen(false)} style={{ marginLeft: "auto", background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 7, width: 28, height: 28, color: "#fff", cursor: "pointer", flexShrink: 0 }}>
-            <X size={15} style={{ margin: "auto" }} />
-          </button>
-        )}
-      </div>
-      <nav style={{ flex: 1, padding: "14px 10px", display: "flex", flexDirection: "column", gap: 3, overflowY: "auto" }}>
-        {visibleNav.map((n) => {
-          const Icon = n.icon;
-          const active = page === n.key;
-          return (
-            <button key={n.key} onClick={() => { setPage(n.key); setDrawerOpen(false); }}
-              style={{
-                display: "flex", alignItems: "center", gap: 11, padding: "10px 12px", borderRadius: 8,
-                border: "none", cursor: "pointer", fontSize: 13.5, fontWeight: active ? 600 : 500,
-                background: active ? "#1FAE7A" : "transparent", color: active ? "#08150F" : "#CBD5E1",
-                transition: "background .12s", textAlign: "left"
-              }}>
-              <Icon size={17} />
-              {n.label}
-            </button>
-          );
-        })}
-      </nav>
-      <div style={{ padding: 14, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-        <div style={{ fontSize: 12.5, color: "#fff", fontWeight: 600 }}>{currentUser.name}</div>
-        <div style={{ fontSize: 11, color: "#7D8CA3", marginBottom: 10, textTransform: "capitalize" }}>{currentUser.role}</div>
-        <button onClick={() => setCurrentUser(null)} style={{
-          display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#F0A0A0", background: "transparent",
-          border: "1px solid rgba(255,255,255,0.12)", borderRadius: 7, padding: "7px 10px", width: "100%", cursor: "pointer"
-        }}>
-          <LogOut size={14} /> Keluar
-        </button>
-      </div>
-    </>
-  );
-
   return (
-    <div style={{ fontFamily: "Inter, ui-sans-serif, sans-serif", background: "#F4F5F7", minHeight: "100vh", color: "#1E2530", display: "flex", flexDirection: isMobile ? "column" : "row" }}>
+    <div style={{ fontFamily: "Inter, ui-sans-serif, sans-serif", background: "#F4F5F7", minHeight: "100vh", color: "#1E2530", display: "flex" }}>
       <style>{globalCss}</style>
-
-      {/* Mobile topbar */}
-      {isMobile && (
-        <div style={{ position: "sticky", top: 0, zIndex: 120, background: "#16233A", display: "flex", alignItems: "center", gap: 10, padding: "12px 14px" }}>
-          <button onClick={() => setDrawerOpen(true)} aria-label="Buka menu" style={{ background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 8, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-            <LayoutDashboard size={16} color="#fff" style={{ display: "none" }} />
-            <span style={{ display: "block", width: 16 }}>
-              <span style={{ display: "block", height: 2, background: "#fff", borderRadius: 2, marginBottom: 3 }} />
-              <span style={{ display: "block", height: 2, background: "#fff", borderRadius: 2, marginBottom: 3 }} />
-              <span style={{ display: "block", height: 2, background: "#fff", borderRadius: 2 }} />
-            </span>
-          </button>
-          <div style={{ width: 28, height: 28, borderRadius: 8, background: "#1FAE7A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <Store size={15} color="#0B1526" />
+      {/* Sidebar */}
+      <aside style={{ width: 232, background: "#16233A", color: "#CBD5E1", display: "flex", flexDirection: "column", flexShrink: 0, position: "sticky", top: 0, height: "100vh" }}>
+        <div style={{ padding: "20px 18px", display: "flex", alignItems: "center", gap: 10, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ width: 34, height: 34, borderRadius: 9, background: "#1FAE7A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Store size={18} color="#0B1526" />
           </div>
-          <div style={{ color: "#fff", fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{data.storeName}</div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 14.5, color: "#fff", lineHeight: 1.1 }}>{data.storeName}</div>
+            <div style={{ fontSize: 11, color: "#7D8CA3" }}>Sistem Kasir Konter</div>
+          </div>
         </div>
-      )}
-
-      {/* Sidebar (desktop: static column, mobile: off-canvas drawer) */}
-      {isMobile ? (
-        <>
-          {drawerOpen && (
-            <div onClick={() => setDrawerOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 140 }} />
-          )}
-          <aside style={{
-            width: 250, background: "#16233A", color: "#CBD5E1", display: "flex", flexDirection: "column",
-            position: "fixed", top: 0, left: 0, height: "100vh", zIndex: 150,
-            transform: drawerOpen ? "translateX(0)" : "translateX(-104%)", transition: "transform .22s ease"
+        <nav style={{ flex: 1, padding: "14px 10px", display: "flex", flexDirection: "column", gap: 3 }}>
+          {visibleNav.map((n) => {
+            const Icon = n.icon;
+            const active = page === n.key;
+            return (
+              <button key={n.key} onClick={() => setPage(n.key)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 11, padding: "10px 12px", borderRadius: 8,
+                  border: "none", cursor: "pointer", fontSize: 13.5, fontWeight: active ? 600 : 500,
+                  background: active ? "#1FAE7A" : "transparent", color: active ? "#08150F" : "#CBD5E1",
+                  transition: "background .12s", textAlign: "left"
+                }}>
+                <Icon size={17} />
+                {n.label}
+              </button>
+            );
+          })}
+        </nav>
+        <div style={{ padding: 14, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ fontSize: 12.5, color: "#fff", fontWeight: 600 }}>{currentUser.name}</div>
+          <div style={{ fontSize: 11, color: "#7D8CA3", marginBottom: 10, textTransform: "capitalize" }}>{currentUser.role}</div>
+          <button onClick={() => setCurrentUser(null)} style={{
+            display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#F0A0A0", background: "transparent",
+            border: "1px solid rgba(255,255,255,0.12)", borderRadius: 7, padding: "7px 10px", width: "100%", cursor: "pointer"
           }}>
-            <NavContent />
-          </aside>
-        </>
-      ) : (
-        <aside style={{ width: 232, background: "#16233A", color: "#CBD5E1", display: "flex", flexDirection: "column", flexShrink: 0, position: "sticky", top: 0, height: "100vh" }}>
-          <NavContent />
-        </aside>
-      )}
+            <LogOut size={14} /> Keluar
+          </button>
+        </div>
+      </aside>
 
       {/* Main */}
-      <main style={{ flex: 1, minWidth: 0, padding: isMobile ? "16px 14px 70px" : "22px 26px 60px", maxWidth: 1280, margin: "0 auto", width: "100%" }}>
-        {page === "dashboard" && <Dashboard data={data} setPage={setPage} isMobile={isMobile} />}
-        {page === "kasir" && <Kasir data={data} persist={persist} showToast={showToast} currentUser={currentUser} storeName={data.storeName} isMobile={isMobile} />}
+      <main style={{ flex: 1, minWidth: 0, padding: "22px 26px 60px", maxWidth: 1280, margin: "0 auto", width: "100%" }}>
+        {page === "dashboard" && <Dashboard data={data} setPage={setPage} />}
+        {page === "kasir" && <Kasir data={data} persist={persist} showToast={showToast} currentUser={currentUser} storeName={data.storeName} />}
         {page === "produk" && <Produk data={data} persist={persist} showToast={showToast} role={currentUser.role} />}
-        {page === "ppob" && <Ppob data={data} persist={persist} showToast={showToast} currentUser={currentUser} isMobile={isMobile} />}
-        {page === "keuangan" && <Keuangan data={data} persist={persist} showToast={showToast} isMobile={isMobile} />}
-        {page === "laporan" && <Laporan data={data} isMobile={isMobile} />}
+        {page === "ppob" && <Ppob data={data} persist={persist} showToast={showToast} currentUser={currentUser} />}
+        {page === "keuangan" && <Keuangan data={data} persist={persist} showToast={showToast} />}
+        {page === "laporan" && <Laporan data={data} />}
         {page === "pengguna" && <Pengguna data={data} persist={persist} showToast={showToast} currentUser={currentUser} />}
       </main>
 
       {toast && (
         <div style={{
-          position: "fixed", bottom: 18, left: isMobile ? 14 : "auto", right: isMobile ? 14 : 22,
-          background: toast.type === "warn" ? "#B45309" : "#0F172A",
+          position: "fixed", bottom: 22, right: 22, background: toast.type === "warn" ? "#B45309" : "#0F172A",
           color: "#fff", padding: "11px 16px", borderRadius: 9, fontSize: 13.5, boxShadow: "0 8px 24px rgba(0,0,0,.25)",
-          display: "flex", alignItems: "center", gap: 8, zIndex: 999, maxWidth: isMobile ? "none" : 340
+          display: "flex", alignItems: "center", gap: 8, zIndex: 999, maxWidth: 340
         }}>
-          <CheckCircle2 size={16} style={{ flexShrink: 0 }} /> {toast.msg}
+          <CheckCircle2 size={16} /> {toast.msg}
         </div>
       )}
     </div>
@@ -244,12 +184,6 @@ const globalCss = `
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 8px; }
   table { border-collapse: collapse; width: 100%; }
-  body { -webkit-tap-highlight-color: transparent; }
-  @media (max-width: 640px) {
-    .page-title-row { flex-direction: column; align-items: stretch; }
-    .page-title-row > *:last-child { width: 100%; }
-    .page-title-row > *:last-child button, .page-title-row > *:last-child a { flex: 1; }
-  }
 `;
 
 // ---------- shared UI bits ----------
@@ -257,8 +191,8 @@ const Card = ({ children, style }) => (
   <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E7E9EE", padding: 18, ...style }}>{children}</div>
 );
 const PageTitle = ({ title, subtitle, right }) => (
-  <div className="page-title-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
-    <div style={{ minWidth: 0 }}>
+  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
+    <div>
       <h1 style={{ fontSize: 21, fontWeight: 700, margin: 0, color: "#0F172A" }}>{title}</h1>
       {subtitle && <div style={{ fontSize: 13, color: "#64748B", marginTop: 3 }}>{subtitle}</div>}
     </div>
@@ -349,7 +283,7 @@ function LoginScreen({ data, onLogin, storeName }) {
 }
 
 // ---------- Dashboard ----------
-function Dashboard({ data, setPage, isMobile }) {
+function Dashboard({ data, setPage }) {
   const today = todayStr();
   const salesToday = data.sales.filter((s) => s.date.slice(0, 10) === today);
   const omzetToday = salesToday.reduce((a, s) => a + s.total, 0);
@@ -384,7 +318,7 @@ function Dashboard({ data, setPage, isMobile }) {
         ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.3fr 1fr", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 14 }}>
         <Card>
           <div style={{ fontWeight: 700, fontSize: 14.5, marginBottom: 12 }}>Transaksi Terbaru</div>
           {recentSales.length === 0 ? <Empty text="Belum ada transaksi penjualan." /> : (
@@ -431,7 +365,7 @@ function Dashboard({ data, setPage, isMobile }) {
 const Empty = ({ text }) => <div style={{ fontSize: 13, color: "#94A3B8", padding: "18px 0", textAlign: "center" }}>{text}</div>;
 
 // ---------- Kasir (POS) ----------
-function Kasir({ data, persist, showToast, currentUser, storeName, isMobile }) {
+function Kasir({ data, persist, showToast, currentUser, storeName }) {
   const [query, setQuery] = useState("");
   const [cat, setCat] = useState("semua");
   const [cart, setCart] = useState([]); // {productId, name, price, cost, qty, stock}
@@ -491,19 +425,19 @@ function Kasir({ data, persist, showToast, currentUser, storeName, isMobile }) {
   return (
     <div>
       <PageTitle title="Kasir" subtitle="Input penjualan dan cetak struk" />
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.6fr 1fr", gap: 16, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 16, alignItems: "start" }}>
         <Card>
           <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
             <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
               <Search size={15} style={{ position: "absolute", left: 10, top: 11, color: "#94A3B8" }} />
               <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari produk atau scan barcode…" style={{ paddingLeft: 32 }} />
             </div>
-            <Select value={cat} onChange={(e) => setCat(e.target.value)} style={{ width: isMobile ? "100%" : 190 }}>
+            <Select value={cat} onChange={(e) => setCat(e.target.value)} style={{ width: 190 }}>
               <option value="semua">Semua Kategori</option>
               {Object.entries(CATEGORY_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </Select>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill,minmax(${isMobile ? 128 : 150}px,1fr))`, gap: 10, maxHeight: isMobile ? 360 : 480, overflowY: "auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: 10, maxHeight: 480, overflowY: "auto" }}>
             {filtered.length === 0 && <Empty text="Produk tidak ditemukan." />}
             {filtered.map((p) => (
               <button key={p.id} onClick={() => addToCart(p)} disabled={p.stock <= 0} style={{
@@ -518,7 +452,7 @@ function Kasir({ data, persist, showToast, currentUser, storeName, isMobile }) {
           </div>
         </Card>
 
-        <Card style={isMobile ? {} : { position: "sticky", top: 20 }}>
+        <Card style={{ position: "sticky", top: 20 }}>
           <div style={{ fontWeight: 700, fontSize: 14.5, marginBottom: 10 }}>Keranjang</div>
           {cart.length === 0 ? <Empty text="Belum ada item dipilih." /> : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 260, overflowY: "auto", marginBottom: 12 }}>
@@ -676,26 +610,24 @@ function Produk({ data, persist, showToast, role }) {
 
       {tab === "riwayat" && (
         <Card>
-          <div style={{ overflowX: "auto" }}>
-            <table>
-              <thead>
-                <tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
-                  <th style={th}>Tanggal</th><th style={th}>Produk</th><th style={th}>Jenis</th><th style={th}>Jumlah</th><th style={th}>Catatan</th>
+          <table>
+            <thead>
+              <tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
+                <th style={th}>Tanggal</th><th style={th}>Produk</th><th style={th}>Jenis</th><th style={th}>Jumlah</th><th style={th}>Catatan</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...data.stockLog].sort((a, b) => b.date.localeCompare(a.date)).map((l) => (
+                <tr key={l.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 13 }}>
+                  <td style={td}>{new Date(l.date).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</td>
+                  <td style={td}>{l.productName}</td>
+                  <td style={td}><Badge tone={l.type === "in" ? "green" : "amber"}>{l.type === "in" ? "Masuk" : "Keluar"}</Badge></td>
+                  <td style={td}>{l.qty}</td>
+                  <td style={td}>{l.note}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {[...data.stockLog].sort((a, b) => b.date.localeCompare(a.date)).map((l) => (
-                  <tr key={l.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 13 }}>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{new Date(l.date).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</td>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{l.productName}</td>
-                    <td style={td}><Badge tone={l.type === "in" ? "green" : "amber"}>{l.type === "in" ? "Masuk" : "Keluar"}</Badge></td>
-                    <td style={td}>{l.qty}</td>
-                    <td style={td}>{l.note}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </table>
           {data.stockLog.length === 0 && <Empty text="Belum ada riwayat stok." />}
         </Card>
       )}
@@ -770,7 +702,7 @@ const PPOB_TYPES = [
   { key: "pdam", label: "PDAM / Air", icon: Droplets, placeholder: "No. Pelanggan PDAM", presets: [] },
 ];
 
-function Ppob({ data, persist, showToast, currentUser, isMobile }) {
+function Ppob({ data, persist, showToast, currentUser }) {
   const [type, setType] = useState("pulsa");
   const [target, setTarget] = useState("");
   const [nominal, setNominal] = useState("");
@@ -794,9 +726,9 @@ function Ppob({ data, persist, showToast, currentUser, isMobile }) {
         <AlertTriangle size={15} style={{ marginTop: 1, flexShrink: 0 }} />
         Modul ini berjalan dalam mode <b>simulasi</b>. Untuk transaksi PPOB nyata, hubungkan ke penyedia API PPOB (misalnya Digiflazz, Payment Gateway BUMN, atau H2H provider lain) — lihat bagian "Struktur API" pada dokumentasi.
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1.2fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: 16 }}>
         <Card>
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "1fr 1fr", gap: 8, marginBottom: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
             {PPOB_TYPES.map((t) => (
               <button key={t.key} onClick={() => { setType(t.key); setNominal(""); }} style={{
                 display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 10, cursor: "pointer",
@@ -832,7 +764,7 @@ function Ppob({ data, persist, showToast, currentUser, isMobile }) {
 
         <Card>
           <div style={{ fontWeight: 700, fontSize: 14.5, marginBottom: 12 }}>Riwayat Transaksi PPOB</div>
-          <div style={{ maxHeight: 460, overflowY: "auto", overflowX: "auto" }}>
+          <div style={{ maxHeight: 460, overflowY: "auto" }}>
             <table>
               <thead>
                 <tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
@@ -842,10 +774,10 @@ function Ppob({ data, persist, showToast, currentUser, isMobile }) {
               <tbody>
                 {[...data.ppobTx].sort((a, b) => b.date.localeCompare(a.date)).map((t) => (
                   <tr key={t.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 12.5 }}>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{new Date(t.date).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</td>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{PPOB_TYPES.find((x) => x.key === t.type)?.label}</td>
+                    <td style={td}>{new Date(t.date).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</td>
+                    <td style={td}>{PPOB_TYPES.find((x) => x.key === t.type)?.label}</td>
                     <td style={td}>{t.target}</td>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{rupiah(t.total)}</td>
+                    <td style={td}>{rupiah(t.total)}</td>
                     <td style={td}><Badge tone="green">{t.status}</Badge></td>
                   </tr>
                 ))}
@@ -860,7 +792,7 @@ function Ppob({ data, persist, showToast, currentUser, isMobile }) {
 }
 
 // ---------- Keuangan ----------
-function Keuangan({ data, persist, showToast, isMobile }) {
+function Keuangan({ data, persist, showToast }) {
   const [tab, setTab] = useState("kas");
   const [txModal, setTxModal] = useState(false);
   const [debtModal, setDebtModal] = useState(false);
@@ -890,12 +822,12 @@ function Keuangan({ data, persist, showToast, isMobile }) {
   return (
     <div>
       <PageTitle title="Keuangan" subtitle="Kas harian, laba rugi sederhana, dan utang-piutang pelanggan"
-        right={<div style={{ display: "flex", gap: 8, width: isMobile ? "100%" : "auto" }}>
-          <Btn variant="outline" onClick={() => setDebtModal(true)} style={isMobile ? { flex: 1, justifyContent: "center" } : {}}><Plus size={14} /> Utang/Piutang</Btn>
-          <Btn onClick={() => setTxModal(true)} style={isMobile ? { flex: 1, justifyContent: "center" } : {}}><Plus size={14} /> Catat Transaksi</Btn>
+        right={<div style={{ display: "flex", gap: 8 }}>
+          <Btn variant="outline" onClick={() => setDebtModal(true)}><Plus size={14} /> Utang/Piutang</Btn>
+          <Btn onClick={() => setTxModal(true)}><Plus size={14} /> Catat Transaksi</Btn>
         </div>} />
 
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3,1fr)", gap: 14, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 16 }}>
         <Card><div style={{ fontSize: 12, color: "#64748B" }}>Total Pemasukan</div><div style={{ fontSize: 19, fontWeight: 700, color: "#1FAE7A" }}>{rupiah(income)}</div></Card>
         <Card><div style={{ fontSize: 12, color: "#64748B" }}>Total Pengeluaran</div><div style={{ fontSize: 19, fontWeight: 700, color: "#DC2626" }}>{rupiah(expense)}</div></Card>
         <Card><div style={{ fontSize: 12, color: "#64748B" }}>Saldo / Profit</div><div style={{ fontSize: 19, fontWeight: 700 }}>{rupiah(income - expense)}</div></Card>
@@ -913,56 +845,52 @@ function Keuangan({ data, persist, showToast, isMobile }) {
 
       {tab === "kas" && (
         <Card>
-          <div style={{ overflowX: "auto" }}>
-            <table>
-              <thead><tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
-                <th style={th}>Tanggal</th><th style={th}>Kategori</th><th style={th}>Catatan</th><th style={th}>Jenis</th><th style={th}>Jumlah</th>
-              </tr></thead>
-              <tbody>
-                {[...data.financeTx].sort((a, b) => b.date.localeCompare(a.date)).map((t) => (
-                  <tr key={t.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 13 }}>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{new Date(t.date).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</td>
-                    <td style={td}>{t.category}</td>
-                    <td style={td}>{t.note}</td>
-                    <td style={td}><Badge tone={t.type === "in" ? "green" : "red"}>{t.type === "in" ? "Masuk" : "Keluar"}</Badge></td>
-                    <td style={{ ...td, fontWeight: 700, color: t.type === "in" ? "#1FAE7A" : "#DC2626", whiteSpace: "nowrap" }}>{t.type === "in" ? "+" : "-"}{rupiah(t.amount)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <table>
+            <thead><tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
+              <th style={th}>Tanggal</th><th style={th}>Kategori</th><th style={th}>Catatan</th><th style={th}>Jenis</th><th style={th}>Jumlah</th>
+            </tr></thead>
+            <tbody>
+              {[...data.financeTx].sort((a, b) => b.date.localeCompare(a.date)).map((t) => (
+                <tr key={t.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 13 }}>
+                  <td style={td}>{new Date(t.date).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</td>
+                  <td style={td}>{t.category}</td>
+                  <td style={td}>{t.note}</td>
+                  <td style={td}><Badge tone={t.type === "in" ? "green" : "red"}>{t.type === "in" ? "Masuk" : "Keluar"}</Badge></td>
+                  <td style={{ ...td, fontWeight: 700, color: t.type === "in" ? "#1FAE7A" : "#DC2626" }}>{t.type === "in" ? "+" : "-"}{rupiah(t.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
           {data.financeTx.length === 0 && <Empty text="Belum ada catatan keuangan." />}
         </Card>
       )}
 
       {tab === "piutang" && (
         <Card>
-          <div style={{ overflowX: "auto" }}>
-            <table>
-              <thead><tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
-                <th style={th}>Pelanggan</th><th style={th}>Total</th><th style={th}>Terbayar</th><th style={th}>Sisa</th><th style={th}>Status</th><th style={th}></th>
-              </tr></thead>
-              <tbody>
-                {data.debts.map((d) => (
-                  <tr key={d.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 13 }}>
-                    <td style={td}><div style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{d.customer}</div><div style={{ fontSize: 11, color: "#94A3B8" }}>{d.note}</div></td>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{rupiah(d.amount)}</td>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{rupiah(d.paid)}</td>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{rupiah(d.amount - d.paid)}</td>
-                    <td style={td}><Badge tone={d.status === "lunas" ? "green" : "amber"}>{d.status}</Badge></td>
-                    <td style={td}>
-                      {d.status !== "lunas" && (
-                        <Btn variant="outline" style={{ padding: "5px 9px", fontSize: 12, whiteSpace: "nowrap" }} onClick={() => {
-                          const amt = Number(prompt("Jumlah pembayaran:", d.amount - d.paid));
-                          if (amt > 0) payDebt(d.id, amt);
-                        }}>Bayar</Btn>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <table>
+            <thead><tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
+              <th style={th}>Pelanggan</th><th style={th}>Total</th><th style={th}>Terbayar</th><th style={th}>Sisa</th><th style={th}>Status</th><th style={th}></th>
+            </tr></thead>
+            <tbody>
+              {data.debts.map((d) => (
+                <tr key={d.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 13 }}>
+                  <td style={td}><div style={{ fontWeight: 600 }}>{d.customer}</div><div style={{ fontSize: 11, color: "#94A3B8" }}>{d.note}</div></td>
+                  <td style={td}>{rupiah(d.amount)}</td>
+                  <td style={td}>{rupiah(d.paid)}</td>
+                  <td style={td}>{rupiah(d.amount - d.paid)}</td>
+                  <td style={td}><Badge tone={d.status === "lunas" ? "green" : "amber"}>{d.status}</Badge></td>
+                  <td style={td}>
+                    {d.status !== "lunas" && (
+                      <Btn variant="outline" style={{ padding: "5px 9px", fontSize: 12 }} onClick={() => {
+                        const amt = Number(prompt("Jumlah pembayaran:", d.amount - d.paid));
+                        if (amt > 0) payDebt(d.id, amt);
+                      }}>Bayar</Btn>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
           {data.debts.length === 0 && <Empty text="Belum ada data utang-piutang." />}
         </Card>
       )}
@@ -1008,7 +936,7 @@ function DebtModal({ onSave, onClose }) {
 }
 
 // ---------- Laporan ----------
-function Laporan({ data, isMobile }) {
+function Laporan({ data }) {
   const [range, setRange] = useState("7"); // days
   const days = Number(range);
   const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days);
@@ -1050,22 +978,22 @@ function Laporan({ data, isMobile }) {
   return (
     <div>
       <PageTitle title="Laporan & Analitik" subtitle="Pantau performa penjualan konter"
-        right={<div style={{ display: "flex", gap: 8, width: isMobile ? "100%" : "auto" }}>
-          <Select value={range} onChange={(e) => setRange(e.target.value)} style={{ width: isMobile ? "100%" : 150 }}>
+        right={<div style={{ display: "flex", gap: 8 }}>
+          <Select value={range} onChange={(e) => setRange(e.target.value)} style={{ width: 150 }}>
             <option value="7">7 Hari Terakhir</option>
             <option value="30">30 Hari Terakhir</option>
             <option value="90">90 Hari Terakhir</option>
           </Select>
-          <Btn variant="outline" onClick={exportCsv} style={isMobile ? { flexShrink: 0 } : {}}><Download size={14} /> {isMobile ? "" : "Export CSV"}</Btn>
+          <Btn variant="outline" onClick={exportCsv}><Download size={14} /> Export CSV</Btn>
         </div>} />
 
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3,1fr)", gap: 14, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 16 }}>
         <Card><div style={{ fontSize: 12, color: "#64748B" }}>Total Omzet</div><div style={{ fontSize: 19, fontWeight: 700 }}>{rupiah(omzet)}</div></Card>
         <Card><div style={{ fontSize: 12, color: "#64748B" }}>Estimasi Profit</div><div style={{ fontSize: 19, fontWeight: 700, color: "#1FAE7A" }}>{rupiah(profit)}</div></Card>
         <Card><div style={{ fontSize: 12, color: "#64748B" }}>Jumlah Transaksi</div><div style={{ fontSize: 19, fontWeight: 700 }}>{salesInRange.length}</div></Card>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.5fr 1fr", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 14 }}>
         <Card>
           <div style={{ fontWeight: 700, fontSize: 14.5, marginBottom: 12 }}>Grafik Omzet</div>
           <div style={{ width: "100%", height: 260 }}>
@@ -1128,26 +1056,24 @@ function Pengguna({ data, persist, showToast, currentUser }) {
       <PageTitle title="Pengguna & Hak Akses" subtitle="Kelola akun owner dan karyawan"
         right={<Btn onClick={() => setModal("new")}><Plus size={15} /> Tambah Pengguna</Btn>} />
       <Card>
-        <div style={{ overflowX: "auto" }}>
-          <table>
-            <thead><tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
-              <th style={th}>Nama</th><th style={th}>Username</th><th style={th}>Peran</th><th style={th}></th>
-            </tr></thead>
-            <tbody>
-              {data.users.map((u) => (
-                <tr key={u.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 13 }}>
-                  <td style={{ ...td, whiteSpace: "nowrap" }}>{u.name}</td>
-                  <td style={{ ...td, whiteSpace: "nowrap" }}>{u.username}</td>
-                  <td style={td}><Badge tone={u.role === "owner" ? "blue" : "slate"}>{u.role === "owner" ? "Owner" : "Karyawan"}</Badge></td>
-                  <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
-                    <button onClick={() => setModal(u)} style={iconBtn}><Pencil size={14} /></button>
-                    <button onClick={() => remove(u.id)} style={iconBtn}><Trash2 size={14} color="#B91C1C" /></button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <table>
+          <thead><tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
+            <th style={th}>Nama</th><th style={th}>Username</th><th style={th}>Peran</th><th style={th}></th>
+          </tr></thead>
+          <tbody>
+            {data.users.map((u) => (
+              <tr key={u.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 13 }}>
+                <td style={td}>{u.name}</td>
+                <td style={td}>{u.username}</td>
+                <td style={td}><Badge tone={u.role === "owner" ? "blue" : "slate"}>{u.role === "owner" ? "Owner" : "Karyawan"}</Badge></td>
+                <td style={{ ...td, textAlign: "right" }}>
+                  <button onClick={() => setModal(u)} style={iconBtn}><Pencil size={14} /></button>
+                  <button onClick={() => remove(u.id)} style={iconBtn}><Trash2 size={14} color="#B91C1C" /></button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </Card>
       <div style={{ marginTop: 14, fontSize: 12, color: "#94A3B8" }}>
         <b>Owner</b> memiliki akses penuh (kasir, stok, PPOB, keuangan, laporan, pengguna). <b>Karyawan</b> hanya memiliki akses ke kasir, produk & stok, dan PPOB.
