@@ -1,0 +1,7 @@
+services:
+  konter-app:
+    build: .
+    container_name: konter-container
+    ports:
+      - "8080:80"
+    restart: unless-stopped
