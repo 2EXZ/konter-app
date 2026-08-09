@@ -1,3 +1,4 @@
+import { supabase } from "./lib/supabase";
 import React, { useState, useEffect, useMemo } from "react";
 import {
   LayoutDashboard, ShoppingCart, Package, Smartphone, Wallet, BarChart3,
@@ -74,6 +75,7 @@ export default function App() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [page, setPage] = useState("dashboard");
   const [toast, setToast] = useState(null);
   const isMobile = useIsMobile();
@@ -97,6 +99,84 @@ export default function App() {
       setLoading(false);
     })();
   }, []);
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await window.storage.get("konter-app-data");
+        if (res && res.value) setData(JSON.parse(res.value));
+        else {
+          const seed = seedData();
+          setData(seed);
+          await window.storage.set("konter-app-data", JSON.stringify(seed));
+        }
+      } catch (e) {
+        const seed = seedData();
+        setData(seed);
+        try {
+          await window.storage.set("konter-app-data", JSON.stringify(seed));
+        } catch (e2) {}
+      }
+      setLoading(false);
+    })();
+  }, []);
+
+
+  // ===== SUPABASE AUTH SESSION =====
+  useEffect(() => {
+    const loadSession = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (session?.user) {
+        const { data: profile, error } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", session.user.id)
+          .single();
+
+        if (!error && profile) {
+          setCurrentUser({
+            id: profile.id,
+            email: session.user.email,
+            name: profile.full_name,
+            role: profile.role,
+          });
+        }
+      }
+
+      setAuthLoading(false);
+    };
+
+    loadSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!session?.user) {
+        setCurrentUser(null);
+        return;
+      }
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", session.user.id)
+        .single();
+
+      if (profile) {
+        setCurrentUser({
+          id: profile.id,
+          email: session.user.email,
+          name: profile.full_name,
+          role: profile.role,
+        });
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
 
   const persist = async (next) => {
     setData(next);
@@ -109,7 +189,7 @@ export default function App() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  if (loading || !data) {
+  if (loading || authLoading || !data) {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F5F6F8", fontFamily: "Inter, sans-serif", color: "#334155" }}>
         Memuat aplikasi…
