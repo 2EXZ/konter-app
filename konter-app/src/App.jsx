@@ -45,7 +45,7 @@ const seedData = () => ({
     { id: uid(), username: "owner", password: "owner123", name: "Pemilik Konter", role: "owner" },
     { id: uid(), username: "kasir1", password: "kasir123", name: "Karyawan Kasir", role: "karyawan" },
   ],
-  storeName: "Konter Jaya Cell",
+  storeName: "Dhell Cell",
 });
 
 const useIsMobile = (breakpoint = 860) => {
@@ -126,8 +126,8 @@ export default function App() {
   const NavContent = () => (
     <>
       <div style={{ padding: "20px 18px", display: "flex", alignItems: "center", gap: 10, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-        <div style={{ width: 34, height: 34, borderRadius: 9, background: "#1FAE7A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <Store size={18} color="#0B1526" />
+        <div style={{ width: 34, height: 34, borderRadius: 9, background: "#2563EB", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Store size={18} color="#FFFFFF" />
         </div>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 14.5, color: "#fff", lineHeight: 1.1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{data.storeName}</div>
@@ -148,7 +148,7 @@ export default function App() {
               style={{
                 display: "flex", alignItems: "center", gap: 11, padding: "10px 12px", borderRadius: 8,
                 border: "none", cursor: "pointer", fontSize: 13.5, fontWeight: active ? 600 : 500,
-                background: active ? "#1FAE7A" : "transparent", color: active ? "#08150F" : "#CBD5E1",
+                background: active ? "#2563EB" : "transparent", color: active ? "#FFFFFF" : "#CBD5E1",
                 transition: "background .12s", textAlign: "left"
               }}>
               <Icon size={17} />
@@ -185,8 +185,8 @@ export default function App() {
               <span style={{ display: "block", height: 2, background: "#fff", borderRadius: 2 }} />
             </span>
           </button>
-          <div style={{ width: 28, height: 28, borderRadius: 8, background: "#1FAE7A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <Store size={15} color="#0B1526" />
+          <div style={{ width: 28, height: 28, borderRadius: 8, background: "#2563EB", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Store size={15} color="#FFFFFF" />
           </div>
           <div style={{ color: "#fff", fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{data.storeName}</div>
         </div>
@@ -239,7 +239,7 @@ export default function App() {
 
 const globalCss = `
   * { box-sizing: border-box; }
-  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #1FAE7A; outline-offset: 1px; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #2563EB; outline-offset: 1px; }
   input, select { font-family: inherit; }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 8px; }
@@ -267,7 +267,7 @@ const PageTitle = ({ title, subtitle, right }) => (
 );
 const Btn = ({ children, onClick, variant = "primary", style, type = "button", disabled }) => {
   const styles = {
-    primary: { background: "#1FAE7A", color: "#fff" },
+    primary: { background: "#2563EB", color: "#fff" },
     outline: { background: "#fff", color: "#334155", border: "1px solid #D8DCE3" },
     danger: { background: "#FEE2E2", color: "#B91C1C" },
     ghost: { background: "transparent", color: "#334155" },
@@ -320,8 +320,8 @@ function LoginScreen({ data, onLogin, storeName }) {
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0F1B2E", fontFamily: "Inter, sans-serif", padding: 16 }}>
       <div style={{ background: "#fff", borderRadius: 16, padding: 34, width: 360, maxWidth: "100%" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 22 }}>
-          <div style={{ width: 38, height: 38, borderRadius: 10, background: "#1FAE7A", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Store size={20} color="#0B1526" />
+          <div style={{ width: 38, height: 38, borderRadius: 10, background: "#2563EB", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Store size={20} color="#FFFFFF" />
           </div>
           <div>
             <div style={{ fontWeight: 700, fontSize: 16 }}>{storeName}</div>
@@ -331,7 +331,7 @@ function LoginScreen({ data, onLogin, storeName }) {
         <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div>
             <label style={{ fontSize: 12.5, fontWeight: 600, color: "#334155" }}>Username</label>
-            <Input value={u} onChange={(e) => setU(e.target.value)} placeholder="owner / kasir1" style={{ marginTop: 5 }} />
+            <Input value={u} onChange={(e) => setU(e.target.value)} placeholder="Masukkan username" style={{ marginTop: 5 }} />
           </div>
           <div>
             <label style={{ fontSize: 12.5, fontWeight: 600, color: "#334155" }}>Password</label>
@@ -340,9 +340,6 @@ function LoginScreen({ data, onLogin, storeName }) {
           {err && <div style={{ fontSize: 12.5, color: "#B91C1C" }}>{err}</div>}
           <Btn type="submit" style={{ justifyContent: "center", marginTop: 4 }}>Masuk</Btn>
         </form>
-        <div style={{ marginTop: 16, fontSize: 11.5, color: "#94A3B8", lineHeight: 1.6 }}>
-          Akun contoh — Owner: <b>owner / owner123</b><br />Karyawan: <b>kasir1 / kasir123</b>
-        </div>
       </div>
     </div>
   );
@@ -359,8 +356,8 @@ function Dashboard({ data, setPage, isMobile }) {
   const recentSales = [...data.sales].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
 
   const stats = [
-    { label: "Omzet Hari Ini", value: rupiah(omzetToday), icon: TrendingUp, tone: "#1FAE7A" },
-    { label: "Estimasi Profit Hari Ini", value: rupiah(profitToday), icon: Wallet, tone: "#2563EB" },
+    { label: "Omzet Hari Ini", value: rupiah(omzetToday), icon: TrendingUp, tone: "#2563EB" },
+    { label: "Estimasi Profit Hari Ini", value: rupiah(profitToday), icon: Wallet, tone: "#0EA5E9" },
     { label: "Transaksi Hari Ini", value: salesToday.length, icon: ShoppingCart, tone: "#7C3AED" },
     { label: "Stok Menipis", value: lowStock.length, icon: AlertTriangle, tone: "#D97706" },
   ];
@@ -395,7 +392,7 @@ function Dashboard({ data, setPage, isMobile }) {
                     <div style={{ fontWeight: 600 }}>{s.items.map((i) => i.name).join(", ").slice(0, 40)}{s.items.map(i=>i.name).join(", ").length>40?"…":""}</div>
                     <div style={{ color: "#94A3B8", fontSize: 11.5 }}>{new Date(s.date).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })} · {s.payment}</div>
                   </div>
-                  <div style={{ fontWeight: 700, color: "#1FAE7A" }}>{rupiah(s.total)}</div>
+                  <div style={{ fontWeight: 700, color: "#2563EB" }}>{rupiah(s.total)}</div>
                 </div>
               ))}
             </div>
@@ -511,7 +508,7 @@ function Kasir({ data, persist, showToast, currentUser, storeName, isMobile }) {
                 background: p.stock > 0 ? "#fff" : "#F8FAFC", opacity: p.stock > 0 ? 1 : 0.55
               }}>
                 <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6, minHeight: 32 }}>{p.name}</div>
-                <div style={{ fontSize: 13.5, fontWeight: 700, color: "#1FAE7A" }}>{rupiah(p.price)}</div>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: "#2563EB" }}>{rupiah(p.price)}</div>
                 <div style={{ fontSize: 11, color: p.stock <= p.minStock ? "#D97706" : "#94A3B8", marginTop: 3 }}>Stok: {p.stock}</div>
               </button>
             ))}
@@ -545,14 +542,14 @@ function Kasir({ data, persist, showToast, currentUser, storeName, isMobile }) {
               {["cash", "transfer", "e-wallet"].map((m) => (
                 <button key={m} onClick={() => setPayment(m)} style={{
                   flex: 1, padding: "8px 4px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                  border: payment === m ? "1.5px solid #1FAE7A" : "1px solid #D8DCE3", background: payment === m ? "#EAFBF3" : "#fff",
-                  color: payment === m ? "#0F7A54" : "#475569", textTransform: "capitalize"
+                  border: payment === m ? "1.5px solid #2563EB" : "1px solid #D8DCE3", background: payment === m ? "#EFF6FF" : "#fff",
+                  color: payment === m ? "#1D4ED8" : "#475569", textTransform: "capitalize"
                 }}>{m}</button>
               ))}
             </div>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 700, borderTop: "1px dashed #E2E8F0", paddingTop: 12, marginBottom: 12 }}>
-            <span>Total</span><span style={{ color: "#1FAE7A" }}>{rupiah(total)}</span>
+            <span>Total</span><span style={{ color: "#2563EB" }}>{rupiah(total)}</span>
           </div>
           <Btn onClick={checkout} style={{ width: "100%", justifyContent: "center" }}>Proses Pembayaran</Btn>
         </Card>
@@ -624,8 +621,8 @@ function Produk({ data, persist, showToast, role }) {
         {[["produk", "Daftar Produk"], ["riwayat", "Riwayat Keluar Masuk"]].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} style={{
             padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer",
-            border: tab === k ? "1.5px solid #1FAE7A" : "1px solid #D8DCE3", background: tab === k ? "#EAFBF3" : "#fff",
-            color: tab === k ? "#0F7A54" : "#475569"
+            border: tab === k ? "1.5px solid #2563EB" : "1px solid #D8DCE3", background: tab === k ? "#EFF6FF" : "#fff",
+            color: tab === k ? "#1D4ED8" : "#475569"
           }}>{l}</button>
         ))}
       </div>
@@ -658,7 +655,7 @@ function Produk({ data, persist, showToast, role }) {
                     </td>
                     <td style={td}>{p.supplier || "-"}</td>
                     <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
-                      <button onClick={() => setStockModal({ product: p, mode: "in" })} title="Barang masuk" style={iconBtn}><ArrowDownCircle size={15} color="#1FAE7A" /></button>
+                      <button onClick={() => setStockModal({ product: p, mode: "in" })} title="Barang masuk" style={iconBtn}><ArrowDownCircle size={15} color="#2563EB" /></button>
                       <button onClick={() => setStockModal({ product: p, mode: "out" })} title="Barang keluar" style={iconBtn}><ArrowUpCircle size={15} color="#D97706" /></button>
                       {role === "owner" && <>
                         <button onClick={() => setEditing(p)} title="Edit" style={iconBtn}><Pencil size={14} color="#334155" /></button>
@@ -796,14 +793,15 @@ function Ppob({ data, persist, showToast, currentUser, isMobile }) {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1.2fr", gap: 16 }}>
         <Card>
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "1fr 1fr", gap: 8, marginBottom: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8, marginBottom: 16 }}>
             {PPOB_TYPES.map((t) => (
               <button key={t.key} onClick={() => { setType(t.key); setNominal(""); }} style={{
-                display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 10, cursor: "pointer",
-                border: type === t.key ? "1.5px solid #1FAE7A" : "1px solid #E7E9EE", background: type === t.key ? "#EAFBF3" : "#fff"
+                display: "flex", flexDirection: isMobile ? "row" : "column", alignItems: isMobile ? "center" : "flex-start",
+                gap: isMobile ? 10 : 8, padding: isMobile ? "10px 12px" : 12, borderRadius: 10, cursor: "pointer", width: "100%",
+                border: type === t.key ? "1.5px solid #2563EB" : "1px solid #E7E9EE", background: type === t.key ? "#EFF6FF" : "#fff"
               }}>
-                <t.icon size={18} color={type === t.key ? "#0F7A54" : "#475569"} />
-                <span style={{ fontSize: 12.5, fontWeight: 600, color: type === t.key ? "#0F7A54" : "#334155" }}>{t.label}</span>
+                <t.icon size={18} color={type === t.key ? "#1D4ED8" : "#475569"} style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: type === t.key ? "#1D4ED8" : "#334155", textAlign: "left" }}>{t.label}</span>
               </button>
             ))}
           </div>
@@ -817,7 +815,7 @@ function Ppob({ data, persist, showToast, currentUser, isMobile }) {
               {active.presets.map((n) => (
                 <button key={n} onClick={() => setNominal(n)} style={{
                   padding: "6px 10px", borderRadius: 7, fontSize: 12, cursor: "pointer",
-                  border: Number(nominal) === n ? "1.5px solid #1FAE7A" : "1px solid #D8DCE3", background: Number(nominal) === n ? "#EAFBF3" : "#fff"
+                  border: Number(nominal) === n ? "1.5px solid #2563EB" : "1px solid #D8DCE3", background: Number(nominal) === n ? "#EFF6FF" : "#fff"
                 }}>{rupiah(n)}</button>
               ))}
             </div>
@@ -825,34 +823,51 @@ function Ppob({ data, persist, showToast, currentUser, isMobile }) {
           <div style={{ height: 10 }} />
           <Field label="Biaya Admin (Fee)"><Input type="number" value={fee} onChange={(e) => setFee(e.target.value)} /></Field>
           <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 15, borderTop: "1px dashed #E2E8F0", marginTop: 14, paddingTop: 12 }}>
-            <span>Total Bayar</span><span style={{ color: "#1FAE7A" }}>{rupiah(total)}</span>
+            <span>Total Bayar</span><span style={{ color: "#2563EB" }}>{rupiah(total)}</span>
           </div>
           <Btn onClick={submit} style={{ width: "100%", justifyContent: "center", marginTop: 12 }}>Proses Transaksi</Btn>
         </Card>
 
         <Card>
           <div style={{ fontWeight: 700, fontSize: 14.5, marginBottom: 12 }}>Riwayat Transaksi PPOB</div>
-          <div style={{ maxHeight: 460, overflowY: "auto", overflowX: "auto" }}>
-            <table>
-              <thead>
-                <tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
-                  <th style={th}>Waktu</th><th style={th}>Layanan</th><th style={th}>Tujuan</th><th style={th}>Total</th><th style={th}>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...data.ppobTx].sort((a, b) => b.date.localeCompare(a.date)).map((t) => (
-                  <tr key={t.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 12.5 }}>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{new Date(t.date).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</td>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{PPOB_TYPES.find((x) => x.key === t.type)?.label}</td>
-                    <td style={td}>{t.target}</td>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{rupiah(t.total)}</td>
-                    <td style={td}><Badge tone="green">{t.status}</Badge></td>
+          {data.ppobTx.length === 0 ? <Empty text="Belum ada transaksi PPOB." /> : isMobile ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 460, overflowY: "auto" }}>
+              {[...data.ppobTx].sort((a, b) => b.date.localeCompare(a.date)).map((t) => (
+                <div key={t.id} style={{ border: "1px solid #F1F5F9", borderRadius: 9, padding: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 4 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{PPOB_TYPES.find((x) => x.key === t.type)?.label}</div>
+                    <Badge tone="green">{t.status}</Badge>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>{t.target}</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5 }}>
+                    <span style={{ color: "#94A3B8" }}>{new Date(t.date).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</span>
+                    <b>{rupiah(t.total)}</b>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ maxHeight: 460, overflowY: "auto", overflowX: "auto" }}>
+              <table>
+                <thead>
+                  <tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
+                    <th style={th}>Waktu</th><th style={th}>Layanan</th><th style={th}>Tujuan</th><th style={th}>Total</th><th style={th}>Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {data.ppobTx.length === 0 && <Empty text="Belum ada transaksi PPOB." />}
-          </div>
+                </thead>
+                <tbody>
+                  {[...data.ppobTx].sort((a, b) => b.date.localeCompare(a.date)).map((t) => (
+                    <tr key={t.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 12.5 }}>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>{new Date(t.date).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>{PPOB_TYPES.find((x) => x.key === t.type)?.label}</td>
+                      <td style={td}>{t.target}</td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>{rupiah(t.total)}</td>
+                      <td style={td}><Badge tone="green">{t.status}</Badge></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </Card>
       </div>
     </div>
@@ -905,8 +920,8 @@ function Keuangan({ data, persist, showToast, isMobile }) {
         {[["kas", "Kas & Ledger"], ["piutang", "Utang / Piutang"]].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} style={{
             padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer",
-            border: tab === k ? "1.5px solid #1FAE7A" : "1px solid #D8DCE3", background: tab === k ? "#EAFBF3" : "#fff",
-            color: tab === k ? "#0F7A54" : "#475569"
+            border: tab === k ? "1.5px solid #2563EB" : "1px solid #D8DCE3", background: tab === k ? "#EFF6FF" : "#fff",
+            color: tab === k ? "#1D4ED8" : "#475569"
           }}>{l}</button>
         ))}
       </div>
@@ -981,7 +996,7 @@ function TxModal({ onSave, onClose }) {
           {["in", "out"].map((t) => (
             <button key={t} onClick={() => setF({ ...f, type: t })} style={{
               flex: 1, padding: "8px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
-              border: f.type === t ? "1.5px solid #1FAE7A" : "1px solid #D8DCE3", background: f.type === t ? "#EAFBF3" : "#fff"
+              border: f.type === t ? "1.5px solid #2563EB" : "1px solid #D8DCE3", background: f.type === t ? "#EFF6FF" : "#fff"
             }}>{t === "in" ? "Pemasukan" : "Pengeluaran"}</button>
           ))}
         </div>
@@ -1034,7 +1049,7 @@ function Laporan({ data, isMobile }) {
     return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, qty]) => ({ name, qty }));
   }, [salesInRange]);
 
-  const COLORS = ["#1FAE7A", "#2563EB", "#7C3AED", "#D97706", "#DC2626", "#0EA5E9"];
+  const COLORS = ["#2563EB", "#0EA5E9", "#7C3AED", "#D97706", "#DC2626", "#0D9488"];
 
   const exportCsv = () => {
     const rows = [["Tanggal", "Item", "Qty", "Total", "Pembayaran", "Pelanggan"]];
@@ -1075,7 +1090,7 @@ function Laporan({ data, isMobile }) {
                 <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => (v >= 1000 ? v / 1000 + "k" : v)} />
                 <Tooltip formatter={(v) => rupiah(v)} />
-                <Bar dataKey="total" fill="#1FAE7A" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="total" fill="#2563EB" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
