@@ -248,7 +248,7 @@ export default function App() {
         {page === "dashboard" && <Dashboard data={data} setPage={setPage} isMobile={isMobile} />}
         {page === "kasir" && <Kasir showToast={showToast} currentUser={currentUser} storeName={data.storeName} isMobile={isMobile} />}
         {page === "produk" && <Produk role={currentUser.role} showToast={showToast} />}
-        {page === "ppob" && <Ppob data={data} persist={persist} showToast={showToast} currentUser={currentUser} isMobile={isMobile} />}
+        {page === "ppob" && <Ppob showToast={showToast} currentUser={currentUser} isMobile={isMobile} />}
         {page === "keuangan" && <Keuangan showToast={showToast} isMobile={isMobile} currentUser={currentUser} />}
         {page === "laporan" && <Laporan data={data} isMobile={isMobile} />}
         {page === "pengguna" && <Pengguna currentUser={currentUser} showToast={showToast} />}
@@ -972,29 +972,83 @@ const PPOB_TYPES = [
   { key: "pdam", label: "PDAM / Air", icon: Droplets, placeholder: "No. Pelanggan PDAM", presets: [] },
 ];
 
-function Ppob({ data, persist, showToast, currentUser, isMobile }) {
+function Ppob({ showToast, currentUser, isMobile }) {
   const [type, setType] = useState("pulsa");
   const [target, setTarget] = useState("");
   const [nominal, setNominal] = useState("");
   const [fee, setFee] = useState(1500);
+  const [transactions, setTransactions] = useState([]);
+  const [loadingPpob, setLoadingPpob] = useState(true);
+  const [saving, setSaving] = useState(false);
   const active = PPOB_TYPES.find((t) => t.key === type);
   const total = (Number(nominal) || 0) + (Number(fee) || 0);
 
-  const submit = async () => {
-    if (!target || !nominal) { showToast("Lengkapi nomor tujuan dan nominal.", "warn"); return; }
-    const tx = { id: uid(), date: new Date().toISOString(), type, target, nominal: Number(nominal), fee: Number(fee), total, status: "sukses (simulasi)", operator: currentUser.name };
-    const financeTx = [...data.financeTx, { id: uid(), date: new Date().toISOString(), type: "in", category: "PPOB - " + active.label, amount: fee, note: `Fee transaksi ${active.label} a.n ${target}` }];
-    await persist({ ...data, ppobTx: [...data.ppobTx, tx], financeTx });
-    setTarget(""); setNominal("");
-    showToast("Transaksi PPOB berhasil (simulasi).");
+  const loadPpob = async () => {
+    const { data: rows, error } = await supabase
+      .from("ppob_transactions")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(100);
+
+    if (error) showToast("Gagal memuat transaksi PPOB: " + error.message, "warn");
+    else setTransactions(rows || []);
+    setLoadingPpob(false);
   };
+
+  useEffect(() => {
+    loadPpob();
+    const channel = supabase
+      .channel("ppob-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "ppob_transactions" }, loadPpob)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
+  const submit = async () => {
+    const cleanTarget = target.trim();
+    const amount = Number(nominal);
+    const adminFee = Number(fee);
+
+    if (!cleanTarget || !amount) {
+      showToast("Lengkapi nomor tujuan dan nominal.", "warn");
+      return;
+    }
+    if (amount <= 0 || adminFee < 0) {
+      showToast("Nominal harus lebih dari 0 dan fee tidak boleh negatif.", "warn");
+      return;
+    }
+    if (saving) return;
+
+    setSaving(true);
+    const { error } = await supabase.rpc("create_ppob_transaction", {
+      p_service_type: type,
+      p_target: cleanTarget,
+      p_nominal: amount,
+      p_fee: adminFee,
+    });
+    setSaving(false);
+
+    if (error) {
+      showToast("Transaksi PPOB gagal: " + error.message, "warn");
+      return;
+    }
+
+    setTarget("");
+    setNominal("");
+    showToast("Transaksi PPOB tersimpan (simulasi).");
+    await loadPpob();
+  };
+
+  const labelFor = (key) => PPOB_TYPES.find((x) => x.key === key)?.label || key;
+  const statusTone = (status) => status === "failed" ? "red" : status === "pending" ? "amber" : "green";
+  const statusLabel = (status) => status === "simulation_success" ? "Sukses (simulasi)" : status === "failed" ? "Gagal" : status === "pending" ? "Diproses" : status;
 
   return (
     <div>
       <PageTitle title="PPOB" subtitle="Top up pulsa, token listrik, BPJS, PDAM, dan tagihan lainnya" />
       <div style={{ background: "#FFF7ED", border: "1px solid #FED7AA", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, color: "#9A5B0D", marginBottom: 16, display: "flex", gap: 8, alignItems: "flex-start" }}>
         <AlertTriangle size={15} style={{ marginTop: 1, flexShrink: 0 }} />
-        Modul ini berjalan dalam mode <b>simulasi</b>. Untuk transaksi PPOB nyata, hubungkan ke penyedia API PPOB (misalnya Digiflazz, Payment Gateway BUMN, atau H2H provider lain) — lihat bagian "Struktur API" pada dokumentasi.
+        Modul PPOB sekarang <b>tersimpan dan sinkron lewat Supabase</b>, tetapi transaksi ke provider masih mode <b>simulasi</b>. Integrasi provider nyata (mis. Digiflazz/H2H) akan membutuhkan credential server-side dan tidak boleh ditaruh di frontend.
       </div>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1.2fr", gap: 16 }}>
         <Card>
@@ -1013,7 +1067,7 @@ function Ppob({ data, persist, showToast, currentUser, isMobile }) {
           <Field label={active.placeholder}><Input value={target} onChange={(e) => setTarget(e.target.value)} placeholder={active.placeholder} /></Field>
           <div style={{ height: 10 }} />
           <Field label="Nominal">
-            <Input type="number" value={nominal} onChange={(e) => setNominal(e.target.value)} placeholder="Masukkan nominal" />
+            <Input type="number" min="1" value={nominal} onChange={(e) => setNominal(e.target.value)} placeholder="Masukkan nominal" />
           </Field>
           {active.presets.length > 0 && (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
@@ -1026,28 +1080,31 @@ function Ppob({ data, persist, showToast, currentUser, isMobile }) {
             </div>
           )}
           <div style={{ height: 10 }} />
-          <Field label="Biaya Admin (Fee)"><Input type="number" value={fee} onChange={(e) => setFee(e.target.value)} /></Field>
+          <Field label="Biaya Admin (Fee)"><Input type="number" min="0" value={fee} onChange={(e) => setFee(e.target.value)} /></Field>
           <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 15, borderTop: "1px dashed #E2E8F0", marginTop: 14, paddingTop: 12 }}>
             <span>Total Bayar</span><span style={{ color: "#2563EB" }}>{rupiah(total)}</span>
           </div>
-          <Btn onClick={submit} style={{ width: "100%", justifyContent: "center", marginTop: 12 }}>Proses Transaksi</Btn>
+          <Btn onClick={submit} disabled={saving} style={{ width: "100%", justifyContent: "center", marginTop: 12 }}>
+            {saving ? "Memproses…" : "Proses Transaksi"}
+          </Btn>
         </Card>
 
         <Card>
           <div style={{ fontWeight: 700, fontSize: 14.5, marginBottom: 12 }}>Riwayat Transaksi PPOB</div>
-          {data.ppobTx.length === 0 ? <Empty text="Belum ada transaksi PPOB." /> : isMobile ? (
+          {loadingPpob ? <div style={{ padding: 18, textAlign: "center", color: "#64748B" }}>Memuat transaksi...</div> : transactions.length === 0 ? <Empty text="Belum ada transaksi PPOB." /> : isMobile ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 460, overflowY: "auto" }}>
-              {[...data.ppobTx].sort((a, b) => b.date.localeCompare(a.date)).map((t) => (
+              {transactions.map((t) => (
                 <div key={t.id} style={{ border: "1px solid #F1F5F9", borderRadius: 9, padding: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 4 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>{PPOB_TYPES.find((x) => x.key === t.type)?.label}</div>
-                    <Badge tone="green">{t.status}</Badge>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{labelFor(t.service_type)}</div>
+                    <Badge tone={statusTone(t.status)}>{statusLabel(t.status)}</Badge>
                   </div>
                   <div style={{ fontSize: 12, color: "#64748B", marginBottom: 4 }}>{t.target}</div>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5 }}>
-                    <span style={{ color: "#94A3B8" }}>{new Date(t.date).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</span>
-                    <b>{rupiah(t.total)}</b>
+                    <span style={{ color: "#94A3B8" }}>{new Date(t.created_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</span>
+                    <b>{rupiah(Number(t.total_amount || 0))}</b>
                   </div>
+                  <div style={{ fontSize: 11.5, color: "#94A3B8", marginTop: 4 }}>Operator: {t.operator_name || currentUser.name}</div>
                 </div>
               ))}
             </div>
@@ -1056,17 +1113,20 @@ function Ppob({ data, persist, showToast, currentUser, isMobile }) {
               <table>
                 <thead>
                   <tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
-                    <th style={th}>Waktu</th><th style={th}>Layanan</th><th style={th}>Tujuan</th><th style={th}>Total</th><th style={th}>Status</th>
+                    <th style={th}>Waktu</th><th style={th}>Layanan</th><th style={th}>Tujuan</th><th style={th}>Nominal</th><th style={th}>Fee</th><th style={th}>Total</th><th style={th}>Operator</th><th style={th}>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {[...data.ppobTx].sort((a, b) => b.date.localeCompare(a.date)).map((t) => (
+                  {transactions.map((t) => (
                     <tr key={t.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 12.5 }}>
-                      <td style={{ ...td, whiteSpace: "nowrap" }}>{new Date(t.date).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</td>
-                      <td style={{ ...td, whiteSpace: "nowrap" }}>{PPOB_TYPES.find((x) => x.key === t.type)?.label}</td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>{new Date(t.created_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>{labelFor(t.service_type)}</td>
                       <td style={td}>{t.target}</td>
-                      <td style={{ ...td, whiteSpace: "nowrap" }}>{rupiah(t.total)}</td>
-                      <td style={td}><Badge tone="green">{t.status}</Badge></td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>{rupiah(Number(t.nominal || 0))}</td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>{rupiah(Number(t.fee || 0))}</td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>{rupiah(Number(t.total_amount || 0))}</td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>{t.operator_name || "-"}</td>
+                      <td style={td}><Badge tone={statusTone(t.status)}>{statusLabel(t.status)}</Badge></td>
                     </tr>
                   ))}
                 </tbody>
@@ -1104,62 +1164,14 @@ function Keuangan({ showToast, isMobile, currentUser }) {
   };
 
   useEffect(() => {
-  loadFinance();
-
-  const channel = supabase
-    .channel("finance-live")
-
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "finance_transactions",
-      },
-      () => {
-        console.log("REALTIME: finance_transactions berubah");
-        loadFinance();
-      }
-    )
-
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "debts",
-      },
-      () => {
-        console.log("REALTIME: debts berubah");
-        loadFinance();
-      }
-    )
-
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "sales",
-      },
-      () => {
-        console.log("REALTIME: sales berubah");
-        loadFinance();
-      }
-    )
-
-    .subscribe((status, err) => {
-      console.log("FINANCE REALTIME STATUS:", status);
-
-      if (err) {
-        console.error("FINANCE REALTIME ERROR:", err);
-      }
-    });
-
-  return () => {
-    supabase.removeChannel(channel);
-  };
-}, []);
+    loadFinance();
+    const channel = supabase.channel("finance-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "finance_transactions" }, loadFinance)
+      .on("postgres_changes", { event: "*", schema: "public", table: "debts" }, loadFinance)
+      .on("postgres_changes", { event: "*", schema: "public", table: "sales" }, loadFinance)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, []);
 
   const manualIncome = financeTx.filter((t) => t.type === "in").reduce((a, t) => a + Number(t.amount || 0), 0);
   const expense = financeTx.filter((t) => t.type === "out").reduce((a, t) => a + Number(t.amount || 0), 0);
