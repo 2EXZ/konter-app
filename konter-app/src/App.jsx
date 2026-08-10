@@ -42,10 +42,6 @@ const seedData = () => ({
   debts: [],
   ppobTx: [],
   stockLog: [],
-  users: [
-    { id: uid(), username: "owner", password: "owner123", name: "Pemilik Konter", role: "owner" },
-    { id: uid(), username: "kasir1", password: "kasir123", name: "Karyawan Kasir", role: "karyawan" },
-  ],
   storeName: "Dhell Cell",
 });
 
@@ -62,10 +58,10 @@ const useIsMobile = (breakpoint = 860) => {
 };
 
 const NAV = [
-  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["owner", "karyawan"] },
-  { key: "kasir", label: "Kasir", icon: ShoppingCart, roles: ["owner", "karyawan"] },
-  { key: "produk", label: "Produk & Stok", icon: Package, roles: ["owner", "karyawan"] },
-  { key: "ppob", label: "PPOB", icon: Smartphone, roles: ["owner", "karyawan"] },
+  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["owner", "cashier"] },
+  { key: "kasir", label: "Kasir", icon: ShoppingCart, roles: ["owner", "cashier"] },
+  { key: "produk", label: "Produk & Stok", icon: Package, roles: ["owner", "cashier"] },
+  { key: "ppob", label: "PPOB", icon: Smartphone, roles: ["owner", "cashier"] },
   { key: "keuangan", label: "Keuangan", icon: Wallet, roles: ["owner"] },
   { key: "laporan", label: "Laporan", icon: BarChart3, roles: ["owner"] },
   { key: "pengguna", label: "Pengguna", icon: Users, roles: ["owner"] },
@@ -81,107 +77,62 @@ export default function App() {
   const isMobile = useIsMobile();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  // Data operasional (produk/kasir/keuangan/dll) — SEMENTARA masih localStorage
+  // (bukan Supabase) sambil menunggu Tahap 2/3 migrasi tabel products/sales/dst.
+  // Sebelumnya kode ini memakai `window.storage`, API yang hanya ada di sandbox
+  // artifact Claude.ai dan TIDAK ADA di browser sungguhan — itu sebabnya data
+  // selalu reset ke seed setiap refresh saat sudah di-deploy. localStorage di
+  // sini hanya menyelesaikan "hilang saat refresh di 1 device", BUKAN sinkron
+  // multi-device (itu baru selesai setelah data pindah ke Supabase).
+  const STORAGE_KEY = "konter-app-data";
   useEffect(() => {
-    (async () => {
-      try {
-        const res = await window.storage.get("konter-app-data");
-        if (res && res.value) setData(JSON.parse(res.value));
-        else {
-          const seed = seedData();
-          setData(seed);
-          await window.storage.set("konter-app-data", JSON.stringify(seed));
-        }
-      } catch (e) {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) setData(JSON.parse(raw));
+      else {
         const seed = seedData();
         setData(seed);
-        try { await window.storage.set("konter-app-data", JSON.stringify(seed)); } catch (e2) {}
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(seed));
       }
-      setLoading(false);
-    })();
+    } catch (e) {
+      setData(seedData());
+    }
+    setLoading(false);
   }, []);
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await window.storage.get("konter-app-data");
-        if (res && res.value) setData(JSON.parse(res.value));
-        else {
-          const seed = seedData();
-          setData(seed);
-          await window.storage.set("konter-app-data", JSON.stringify(seed));
-        }
-      } catch (e) {
-        const seed = seedData();
-        setData(seed);
-        try {
-          await window.storage.set("konter-app-data", JSON.stringify(seed));
-        } catch (e2) {}
-      }
-      setLoading(false);
-    })();
-  }, []);
-
 
   // ===== SUPABASE AUTH SESSION =====
   useEffect(() => {
-    const loadSession = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (session?.user) {
-        const { data: profile, error } = await supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", session.user.id)
-          .single();
-
-        if (!error && profile) {
-          setCurrentUser({
-            id: profile.id,
-            email: session.user.email,
-            name: profile.full_name,
-            role: profile.role,
-          });
-        }
-      }
-
-      setAuthLoading(false);
-    };
-
-    loadSession();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!session?.user) {
-        setCurrentUser(null);
-        return;
-      }
-
-      const { data: profile } = await supabase
+    const loadProfile = async (userId, email) => {
+      const { data: profile, error } = await supabase
         .from("profiles")
         .select("*")
-        .eq("id", session.user.id)
+        .eq("id", userId)
         .single();
-
-      if (profile) {
-        setCurrentUser({
-          id: profile.id,
-          email: session.user.email,
-          name: profile.full_name,
-          role: profile.role,
-        });
+      if (!error && profile) {
+        setCurrentUser({ id: profile.id, email, name: profile.full_name, role: profile.role });
+      } else {
+        // Profil belum ada (trigger belum sempat jalan / race condition) — jangan macet di loading.
+        setCurrentUser({ id: userId, email, name: email, role: "cashier" });
       }
+    };
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) loadProfile(session.user.id, session.user.email);
+      setAuthLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session?.user) { setCurrentUser(null); return; }
+      loadProfile(session.user.id, session.user.email);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-
   const persist = async (next) => {
     setData(next);
-    try { await window.storage.set("konter-app-data", JSON.stringify(next)); }
-    catch (e) { showToast("Gagal menyimpan data (offline?). Perubahan tetap tersimpan di sesi ini.", "warn"); }
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); }
+    catch (e) { showToast("Gagal menyimpan data ke penyimpanan lokal.", "warn"); }
   };
 
   const showToast = (msg, type = "ok") => {
@@ -198,7 +149,7 @@ export default function App() {
   }
 
   if (!currentUser) {
-    return <LoginScreen data={data} onLogin={setCurrentUser} storeName={data.storeName} />;
+    return <LoginScreen storeName={data.storeName} />;
   }
 
   const visibleNav = NAV.filter((n) => n.roles.includes(currentUser.role));
@@ -240,7 +191,7 @@ export default function App() {
       <div style={{ padding: 14, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
         <div style={{ fontSize: 12.5, color: "#fff", fontWeight: 600 }}>{currentUser.name}</div>
         <div style={{ fontSize: 11, color: "#7D8CA3", marginBottom: 10, textTransform: "capitalize" }}>{currentUser.role}</div>
-        <button onClick={() => setCurrentUser(null)} style={{
+        <button onClick={() => supabase.auth.signOut()} style={{
           display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#F0A0A0", background: "transparent",
           border: "1px solid rgba(255,255,255,0.12)", borderRadius: 7, padding: "7px 10px", width: "100%", cursor: "pointer"
         }}>
@@ -296,11 +247,11 @@ export default function App() {
       <main style={{ flex: 1, minWidth: 0, padding: isMobile ? "16px 14px 70px" : "22px 26px 60px", maxWidth: 1280, margin: "0 auto", width: "100%" }}>
         {page === "dashboard" && <Dashboard data={data} setPage={setPage} isMobile={isMobile} />}
         {page === "kasir" && <Kasir data={data} persist={persist} showToast={showToast} currentUser={currentUser} storeName={data.storeName} isMobile={isMobile} />}
-        {page === "produk" && <Produk data={data} persist={persist} showToast={showToast} role={currentUser.role} />}
+        {page === "produk" && <Produk role={currentUser.role} showToast={showToast} />}
         {page === "ppob" && <Ppob data={data} persist={persist} showToast={showToast} currentUser={currentUser} isMobile={isMobile} />}
         {page === "keuangan" && <Keuangan data={data} persist={persist} showToast={showToast} isMobile={isMobile} />}
         {page === "laporan" && <Laporan data={data} isMobile={isMobile} />}
-        {page === "pengguna" && <Pengguna data={data} persist={persist} showToast={showToast} currentUser={currentUser} />}
+        {page === "pengguna" && <Pengguna currentUser={currentUser} showToast={showToast} />}
       </main>
 
       {toast && (
@@ -345,7 +296,7 @@ const PageTitle = ({ title, subtitle, right }) => (
     {right}
   </div>
 );
-const Btn = ({ children, onClick, variant = "primary", style, type = "button", disabled }) => {
+const Btn = ({ children, onClick, variant = "primary", style, type = "button", disabled, title }) => {
   const styles = {
     primary: { background: "#2563EB", color: "#fff" },
     outline: { background: "#fff", color: "#334155", border: "1px solid #D8DCE3" },
@@ -353,7 +304,7 @@ const Btn = ({ children, onClick, variant = "primary", style, type = "button", d
     ghost: { background: "transparent", color: "#334155" },
   };
   return (
-    <button type={type} disabled={disabled} onClick={onClick} style={{
+    <button type={type} disabled={disabled} onClick={onClick} title={title} style={{
       padding: "9px 14px", borderRadius: 8, fontSize: 13.5, fontWeight: 600, border: "none", cursor: disabled ? "not-allowed" : "pointer",
       display: "inline-flex", alignItems: "center", gap: 7, opacity: disabled ? 0.55 : 1, ...styles[variant], ...style
     }}>{children}</button>
@@ -386,16 +337,32 @@ const Badge = ({ children, tone = "slate" }) => {
 };
 
 // ---------- Login ----------
-function LoginScreen({ data, onLogin, storeName }) {
-  const [u, setU] = useState("");
+function LoginScreen({ storeName }) {
+  const [email, setEmail] = useState("");
   const [p, setP] = useState("");
   const [err, setErr] = useState("");
-  const submit = (e) => {
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e) => {
     e.preventDefault();
-    const user = data.users.find((x) => x.username === u.trim() && x.password === p);
-    if (user) onLogin(user);
-    else setErr("Username atau password salah.");
+    if (submitting) return;
+    setErr("");
+    setSubmitting(true);
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password: p,
+    });
+    setSubmitting(false);
+    if (error) {
+      setErr(
+        error.message === "Invalid login credentials"
+          ? "Email atau password salah."
+          : error.message
+      );
+    }
+    // Sukses login: onAuthStateChange di App akan otomatis mengambil alih (set currentUser).
   };
+
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0F1B2E", fontFamily: "Inter, sans-serif", padding: 16 }}>
       <div style={{ background: "#fff", borderRadius: 16, padding: 34, width: 360, maxWidth: "100%" }}>
@@ -410,15 +377,17 @@ function LoginScreen({ data, onLogin, storeName }) {
         </div>
         <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div>
-            <label style={{ fontSize: 12.5, fontWeight: 600, color: "#334155" }}>Username</label>
-            <Input value={u} onChange={(e) => setU(e.target.value)} placeholder="Masukkan username" style={{ marginTop: 5 }} />
+            <label style={{ fontSize: 12.5, fontWeight: 600, color: "#334155" }}>Email</label>
+            <Input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nama@email.com" style={{ marginTop: 5 }} />
           </div>
           <div>
             <label style={{ fontSize: 12.5, fontWeight: 600, color: "#334155" }}>Password</label>
-            <Input type="password" value={p} onChange={(e) => setP(e.target.value)} placeholder="••••••••" style={{ marginTop: 5 }} />
+            <Input type="password" autoComplete="current-password" value={p} onChange={(e) => setP(e.target.value)} placeholder="••••••••" style={{ marginTop: 5 }} />
           </div>
           {err && <div style={{ fontSize: 12.5, color: "#B91C1C" }}>{err}</div>}
-          <Btn type="submit" style={{ justifyContent: "center", marginTop: 4 }}>Masuk</Btn>
+          <Btn type="submit" disabled={submitting} style={{ justifyContent: "center", marginTop: 4 }}>
+            {submitting ? "Memproses…" : "Masuk"}
+          </Btn>
         </form>
       </div>
     </div>
@@ -662,40 +631,120 @@ function ReceiptModal({ sale, storeName, onClose }) {
 }
 
 // ---------- Produk & Stok ----------
-function Produk({ data, persist, showToast, role }) {
+// ---------- Produk & Stok (Supabase: products + stock_movements) ----------
+const mapRowToProduct = (r) => ({
+  id: r.id,
+  name: r.name,
+  category: r.category,
+  sku: r.sku || "",
+  price: Number(r.selling_price) || 0,
+  cost: Number(r.purchase_price) || 0,
+  stock: r.stock,
+  minStock: r.minimum_stock,
+  supplier: r.supplier || "",
+  serial: r.serial || "",
+  imei: r.imei || "",
+});
+
+function Produk({ role, showToast }) {
   const [tab, setTab] = useState("produk");
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState(null); // product or "new"
   const [stockModal, setStockModal] = useState(null); // {product, mode}
+  const [products, setProducts] = useState(null);
+  const [logs, setLogs] = useState(null);
+  const [loadErr, setLoadErr] = useState("");
 
-  const filtered = data.products.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()));
+  const loadProducts = async () => {
+    const { data: rows, error } = await supabase.from("products").select("*").order("name");
+    if (error) { setLoadErr(error.message); return; }
+    setLoadErr("");
+    setProducts(rows.map(mapRowToProduct));
+  };
+  const loadLogs = async () => {
+    const { data: rows, error } = await supabase
+      .from("stock_movements")
+      .select("id, movement_type, quantity, before_stock, after_stock, note, created_at, products(name)")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (!error) setLogs(rows);
+  };
+  useEffect(() => { loadProducts(); loadLogs(); }, []);
 
-  const saveProduct = async (p) => {
-    let products;
-    if (p.id) products = data.products.map((x) => x.id === p.id ? p : x);
-    else products = [...data.products, { ...p, id: uid() }];
-    await persist({ ...data, products });
+  const filtered = (products || []).filter((p) => p.name.toLowerCase().includes(query.toLowerCase()));
+
+  const saveProduct = async (f) => {
+    const payload = {
+      name: f.name,
+      category: f.category,
+      sku: f.sku?.trim() || null,
+      selling_price: Number(f.price) || 0,
+      purchase_price: Number(f.cost) || 0,
+      minimum_stock: Number(f.minStock) || 0,
+      supplier: f.supplier || null,
+      serial: f.category === "perdana" ? (f.serial || null) : null,
+      imei: f.category === "hp" ? (f.imei || null) : null,
+    };
+    if (f.id) {
+      // Edit: stok TIDAK ikut diubah di sini — perubahan stok harus lewat
+      // tombol Barang Masuk/Keluar supaya selalu tercatat di stock_movements.
+      const { error } = await supabase.from("products").update(payload).eq("id", f.id);
+      if (error) { showToast("Gagal menyimpan: " + error.message, "warn"); return; }
+    } else {
+      const initialStock = Number(f.stock) || 0;
+      const { data: inserted, error } = await supabase.from("products").insert(payload).select().single();
+      if (error) { showToast("Gagal menyimpan: " + error.message, "warn"); return; }
+      if (initialStock > 0) {
+        const { error: rpcErr } = await supabase.rpc("adjust_stock", {
+          p_product_id: inserted.id, p_direction: "in", p_movement_type: "purchase",
+          p_quantity: initialStock, p_note: "Stok awal saat produk dibuat",
+        });
+        if (rpcErr) showToast("Produk tersimpan, tapi stok awal gagal tercatat: " + rpcErr.message, "warn");
+      }
+    }
     setEditing(null);
     showToast("Produk tersimpan.");
+    loadProducts(); loadLogs();
   };
+
   const deleteProduct = async (id) => {
-    await persist({ ...data, products: data.products.filter((p) => p.id !== id) });
+    const { error } = await supabase.from("products").delete().eq("id", id);
+    if (error) {
+      showToast(
+        error.code === "23503"
+          ? "Produk tidak bisa dihapus karena sudah punya riwayat stok."
+          : "Gagal menghapus: " + error.message,
+        "warn"
+      );
+      return;
+    }
     showToast("Produk dihapus.");
+    loadProducts();
   };
-  const doStockMove = async (product, mode, qty, note) => {
+
+  const doStockMove = async (product, mode, movementType, qty, note) => {
     qty = Number(qty);
-    if (!qty || qty <= 0) return;
-    const products = data.products.map((p) => p.id === product.id ? { ...p, stock: mode === "in" ? p.stock + qty : Math.max(0, p.stock - qty) } : p);
-    const stockLog = [...data.stockLog, { id: uid(), date: new Date().toISOString(), productId: product.id, productName: product.name, type: mode, qty, note: note || (mode === "in" ? "Barang masuk" : "Barang keluar") }];
-    await persist({ ...data, products, stockLog });
+    if (!qty || qty <= 0) { showToast("Jumlah harus lebih dari 0.", "warn"); return; }
+    const { error } = await supabase.rpc("adjust_stock", {
+      p_product_id: product.id, p_direction: mode, p_movement_type: movementType,
+      p_quantity: qty, p_note: note || null,
+    });
+    if (error) { showToast("Gagal memperbarui stok: " + error.message, "warn"); return; }
     setStockModal(null);
     showToast("Stok diperbarui.");
+    loadProducts(); loadLogs();
   };
 
   return (
     <div>
       <PageTitle title="Produk & Stok" subtitle="Kelola aksesoris, kartu perdana, pulsa, dan unit HP"
         right={role === "owner" && <Btn onClick={() => setEditing("new")}><Plus size={15} /> Tambah Produk</Btn>} />
+
+      {loadErr && (
+        <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#B91C1C", borderRadius: 9, padding: "10px 14px", fontSize: 12.5, marginBottom: 14 }}>
+          Gagal memuat produk dari server: {loadErr}
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
         {[["produk", "Daftar Produk"], ["riwayat", "Riwayat Keluar Masuk"]].map(([k, l]) => (
@@ -735,9 +784,9 @@ function Produk({ data, persist, showToast, role }) {
                     </td>
                     <td style={td}>{p.supplier || "-"}</td>
                     <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
-                      <button onClick={() => setStockModal({ product: p, mode: "in" })} title="Barang masuk" style={iconBtn}><ArrowDownCircle size={15} color="#2563EB" /></button>
-                      <button onClick={() => setStockModal({ product: p, mode: "out" })} title="Barang keluar" style={iconBtn}><ArrowUpCircle size={15} color="#D97706" /></button>
                       {role === "owner" && <>
+                        <button onClick={() => setStockModal({ product: p, mode: "in" })} title="Barang masuk" style={iconBtn}><ArrowDownCircle size={15} color="#2563EB" /></button>
+                        <button onClick={() => setStockModal({ product: p, mode: "out" })} title="Barang keluar" style={iconBtn}><ArrowUpCircle size={15} color="#D97706" /></button>
                         <button onClick={() => setEditing(p)} title="Edit" style={iconBtn}><Pencil size={14} color="#334155" /></button>
                         <button onClick={() => deleteProduct(p.id)} title="Hapus" style={iconBtn}><Trash2 size={14} color="#B91C1C" /></button>
                       </>}
@@ -746,7 +795,8 @@ function Produk({ data, persist, showToast, role }) {
                 ))}
               </tbody>
             </table>
-            {filtered.length === 0 && <Empty text="Belum ada produk." />}
+            {products === null && !loadErr && <Empty text="Memuat produk…" />}
+            {products && filtered.length === 0 && <Empty text="Belum ada produk." />}
           </div>
         </Card>
       )}
@@ -757,23 +807,25 @@ function Produk({ data, persist, showToast, role }) {
             <table>
               <thead>
                 <tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
-                  <th style={th}>Tanggal</th><th style={th}>Produk</th><th style={th}>Jenis</th><th style={th}>Jumlah</th><th style={th}>Catatan</th>
+                  <th style={th}>Tanggal</th><th style={th}>Produk</th><th style={th}>Jenis</th><th style={th}>Jumlah</th><th style={th}>Stok Sebelum→Sesudah</th><th style={th}>Catatan</th>
                 </tr>
               </thead>
               <tbody>
-                {[...data.stockLog].sort((a, b) => b.date.localeCompare(a.date)).map((l) => (
+                {(logs || []).map((l) => (
                   <tr key={l.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 13 }}>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{new Date(l.date).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</td>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{l.productName}</td>
-                    <td style={td}><Badge tone={l.type === "in" ? "green" : "amber"}>{l.type === "in" ? "Masuk" : "Keluar"}</Badge></td>
-                    <td style={td}>{l.qty}</td>
+                    <td style={{ ...td, whiteSpace: "nowrap" }}>{new Date(l.created_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</td>
+                    <td style={{ ...td, whiteSpace: "nowrap" }}>{l.products?.name || "-"}</td>
+                    <td style={td}><Badge tone={["purchase", "return"].includes(l.movement_type) ? "green" : "amber"}>{MOVEMENT_LABEL[l.movement_type] || l.movement_type}</Badge></td>
+                    <td style={td}>{l.quantity}</td>
+                    <td style={td}>{l.before_stock} → {l.after_stock}</td>
                     <td style={td}>{l.note}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          {data.stockLog.length === 0 && <Empty text="Belum ada riwayat stok." />}
+          {logs === null && <Empty text="Memuat riwayat…" />}
+          {logs && logs.length === 0 && <Empty text="Belum ada riwayat stok." />}
         </Card>
       )}
 
@@ -782,6 +834,7 @@ function Produk({ data, persist, showToast, role }) {
     </div>
   );
 }
+const MOVEMENT_LABEL = { purchase: "Pembelian", return: "Retur", adjustment: "Penyesuaian", other: "Lainnya", sale: "Penjualan" };
 const th = { padding: "8px 10px" };
 const td = { padding: "10px 10px", verticalAlign: "top" };
 const iconBtn = { background: "#F8FAFC", border: "1px solid #E7E9EE", borderRadius: 6, width: 27, height: 27, marginLeft: 5, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" };
@@ -789,8 +842,9 @@ const iconBtn = { background: "#F8FAFC", border: "1px solid #E7E9EE", borderRadi
 function ProductModal({ product, onSave, onClose }) {
   const [f, setF] = useState(product || { name: "", category: "aksesoris", sku: "", price: "", cost: "", stock: "", minStock: 3, supplier: "", serial: "", imei: "" });
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  const isEdit = !!product;
   return (
-    <Modal title={product ? "Edit Produk" : "Tambah Produk"} onClose={onClose}>
+    <Modal title={isEdit ? "Edit Produk" : "Tambah Produk"} onClose={onClose}>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <Field label="Nama Produk"><Input value={f.name} onChange={(e) => set("name", e.target.value)} /></Field>
         <Field label="Kategori">
@@ -807,7 +861,10 @@ function ProductModal({ product, onSave, onClose }) {
           <Field label="Harga Jual"><Input type="number" value={f.price} onChange={(e) => set("price", Number(e.target.value))} /></Field>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <Field label="Stok Awal"><Input type="number" value={f.stock} onChange={(e) => set("stock", Number(e.target.value))} /></Field>
+          <Field label={isEdit ? "Stok (ubah lewat Barang Masuk/Keluar)" : "Stok Awal"}>
+            <Input type="number" value={f.stock} disabled={isEdit} onChange={(e) => set("stock", Number(e.target.value))}
+              style={isEdit ? { background: "#F1F5F9", color: "#94A3B8" } : {}} />
+          </Field>
           <Field label="Batas Stok Minim"><Input type="number" value={f.minStock} onChange={(e) => set("minStock", Number(e.target.value))} /></Field>
         </div>
         {(f.category === "perdana" || f.category === "hp") && (
@@ -824,20 +881,37 @@ const Field = ({ label, children }) => (
   <div><label style={{ fontSize: 12, fontWeight: 600, color: "#334155", marginBottom: 4, display: "block" }}>{label}</label>{children}</div>
 );
 
+const IN_TYPES = [["purchase", "Pembelian / Restock"], ["return", "Retur dari pelanggan"], ["adjustment", "Penyesuaian stok"], ["other", "Lainnya"]];
+const OUT_TYPES = [["adjustment", "Penyesuaian stok"], ["other", "Rusak / hilang / lainnya"]];
+
 function StockMoveModal({ product, mode, onSave, onClose }) {
+  const typeOptions = mode === "in" ? IN_TYPES : OUT_TYPES;
+  const [movementType, setMovementType] = useState(typeOptions[0][0]);
   const [qty, setQty] = useState("");
   const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    setSaving(true);
+    await onSave(product, mode, movementType, qty, note);
+    setSaving(false);
+  };
   return (
     <Modal title={(mode === "in" ? "Barang Masuk" : "Barang Keluar") + " — " + product.name} onClose={onClose} width={380}>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ fontSize: 12.5, color: "#64748B" }}>Stok saat ini: <b>{product.stock}</b></div>
+        <Field label="Jenis">
+          <Select value={movementType} onChange={(e) => setMovementType(e.target.value)}>
+            {typeOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </Select>
+        </Field>
         <Field label="Jumlah"><Input type="number" autoFocus value={qty} onChange={(e) => setQty(e.target.value)} /></Field>
         <Field label="Catatan (opsional)"><Input value={note} onChange={(e) => setNote(e.target.value)} placeholder={mode === "in" ? "Restock dari supplier" : "Rusak / retur / lainnya"} /></Field>
-        <Btn onClick={() => onSave(product, mode, qty, note)} style={{ justifyContent: "center" }}>Simpan</Btn>
+        <Btn onClick={submit} disabled={saving} style={{ justifyContent: "center" }}>{saving ? "Menyimpan…" : "Simpan"}</Btn>
       </div>
     </Modal>
   );
 }
+
 
 // ---------- PPOB ----------
 const PPOB_TYPES = [
@@ -1204,68 +1278,83 @@ function Laporan({ data, isMobile }) {
 }
 
 // ---------- Pengguna ----------
-function Pengguna({ data, persist, showToast, currentUser }) {
+function Pengguna({ currentUser, showToast }) {
+  const [users, setUsers] = useState(null);
+  const [loadErr, setLoadErr] = useState("");
   const [modal, setModal] = useState(null);
+
+  const loadUsers = async () => {
+    setLoadErr("");
+    const { data: rows, error } = await supabase
+      .from("profiles")
+      .select("id, full_name, role, created_at")
+      .order("created_at", { ascending: true });
+    if (error) setLoadErr(error.message);
+    else setUsers(rows);
+  };
+
+  useEffect(() => { loadUsers(); }, []);
+
   const save = async (u) => {
-    let users;
-    if (u.id) users = data.users.map((x) => x.id === u.id ? u : x);
-    else users = [...data.users, { ...u, id: uid() }];
-    await persist({ ...data, users });
-    setModal(null); showToast("Pengguna tersimpan.");
+    const { error } = await supabase
+      .from("profiles")
+      .update({ full_name: u.full_name, role: u.role })
+      .eq("id", u.id);
+    if (error) { showToast("Gagal menyimpan: " + error.message, "warn"); return; }
+    setModal(null);
+    showToast("Pengguna tersimpan.");
+    loadUsers();
   };
-  const remove = async (id) => {
-    if (id === currentUser.id) { showToast("Tidak bisa menghapus akun sendiri.", "warn"); return; }
-    await persist({ ...data, users: data.users.filter((u) => u.id !== id) });
-    showToast("Pengguna dihapus.");
-  };
+
   return (
     <div>
-      <PageTitle title="Pengguna & Hak Akses" subtitle="Kelola akun owner dan karyawan"
-        right={<Btn onClick={() => setModal("new")}><Plus size={15} /> Tambah Pengguna</Btn>} />
+      <PageTitle title="Pengguna & Hak Akses" subtitle="Kelola akun owner dan cashier"
+        right={<Btn variant="outline" disabled title="Tambah akun lewat Supabase Dashboard (lihat catatan di bawah)"><Plus size={15} /> Tambah Pengguna</Btn>} />
       <Card>
+        {loadErr && <div style={{ fontSize: 12.5, color: "#B91C1C", marginBottom: 10 }}>Gagal memuat pengguna: {loadErr}</div>}
         <div style={{ overflowX: "auto" }}>
           <table>
             <thead><tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
-              <th style={th}>Nama</th><th style={th}>Username</th><th style={th}>Peran</th><th style={th}></th>
+              <th style={th}>Nama</th><th style={th}>Peran</th><th style={th}>Bergabung</th><th style={th}></th>
             </tr></thead>
             <tbody>
-              {data.users.map((u) => (
+              {(users || []).map((u) => (
                 <tr key={u.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 13 }}>
-                  <td style={{ ...td, whiteSpace: "nowrap" }}>{u.name}</td>
-                  <td style={{ ...td, whiteSpace: "nowrap" }}>{u.username}</td>
-                  <td style={td}><Badge tone={u.role === "owner" ? "blue" : "slate"}>{u.role === "owner" ? "Owner" : "Karyawan"}</Badge></td>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>{u.full_name}{u.id === currentUser.id && <span style={{ color: "#94A3B8", fontSize: 11 }}> (Anda)</span>}</td>
+                  <td style={td}><Badge tone={u.role === "owner" ? "blue" : "slate"}>{u.role === "owner" ? "Owner" : "Cashier"}</Badge></td>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>{u.created_at ? new Date(u.created_at).toLocaleDateString("id-ID", { dateStyle: "medium" }) : "-"}</td>
                   <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
                     <button onClick={() => setModal(u)} style={iconBtn}><Pencil size={14} /></button>
-                    <button onClick={() => remove(u.id)} style={iconBtn}><Trash2 size={14} color="#B91C1C" /></button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        {users === null && !loadErr && <Empty text="Memuat…" />}
+        {users && users.length === 0 && <Empty text="Belum ada pengguna." />}
       </Card>
-      <div style={{ marginTop: 14, fontSize: 12, color: "#94A3B8" }}>
-        <b>Owner</b> memiliki akses penuh (kasir, stok, PPOB, keuangan, laporan, pengguna). <b>Karyawan</b> hanya memiliki akses ke kasir, produk & stok, dan PPOB.
+      <div style={{ marginTop: 14, fontSize: 12, color: "#94A3B8", lineHeight: 1.6 }}>
+        <b>Owner</b> memiliki akses penuh (kasir, stok, PPOB, keuangan, laporan, pengguna). <b>Cashier</b> hanya memiliki akses ke kasir, produk & stok, dan PPOB.<br />
+        Menambah atau menghapus akun perlu Admin API Supabase yang <b>tidak aman dijalankan dari browser</b>, jadi untuk saat ini dilakukan lewat <b>Supabase Dashboard → Authentication → Users → Add user</b>. Akun pertama yang dibuat otomatis jadi <b>owner</b>; akun berikutnya otomatis jadi <b>cashier</b> dan bisa dipromosikan lewat tombol edit di atas.
       </div>
-      {modal && <UserModal user={modal === "new" ? null : modal} onSave={save} onClose={() => setModal(null)} />}
+      {modal && <UserModal user={modal} onSave={save} onClose={() => setModal(null)} />}
     </div>
   );
 }
 function UserModal({ user, onSave, onClose }) {
-  const [f, setF] = useState(user || { name: "", username: "", password: "", role: "karyawan" });
+  const [f, setF] = useState({ id: user.id, full_name: user.full_name, role: user.role });
   return (
-    <Modal title={user ? "Edit Pengguna" : "Tambah Pengguna"} onClose={onClose} width={380}>
+    <Modal title="Edit Pengguna" onClose={onClose} width={380}>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <Field label="Nama Lengkap"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-        <Field label="Username"><Input value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} /></Field>
-        <Field label="Password"><Input type="text" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></Field>
+        <Field label="Nama Lengkap"><Input value={f.full_name} onChange={(e) => setF({ ...f, full_name: e.target.value })} /></Field>
         <Field label="Peran">
           <Select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>
-            <option value="karyawan">Karyawan</option>
+            <option value="cashier">Cashier</option>
             <option value="owner">Owner</option>
           </Select>
         </Field>
-        <Btn onClick={() => f.name && f.username && f.password && onSave(f)} style={{ justifyContent: "center" }}>Simpan</Btn>
+        <Btn onClick={() => f.full_name && onSave(f)} style={{ justifyContent: "center" }}>Simpan</Btn>
       </div>
     </Modal>
   );
