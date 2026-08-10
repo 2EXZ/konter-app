@@ -1104,14 +1104,62 @@ function Keuangan({ showToast, isMobile, currentUser }) {
   };
 
   useEffect(() => {
-    loadFinance();
-    const channel = supabase.channel("finance-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "finance_transactions" }, loadFinance)
-      .on("postgres_changes", { event: "*", schema: "public", table: "debts" }, loadFinance)
-      .on("postgres_changes", { event: "*", schema: "public", table: "sales" }, loadFinance)
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, []);
+  loadFinance();
+
+  const channel = supabase
+    .channel("finance-live")
+
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "finance_transactions",
+      },
+      () => {
+        console.log("REALTIME: finance_transactions berubah");
+        loadFinance();
+      }
+    )
+
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "debts",
+      },
+      () => {
+        console.log("REALTIME: debts berubah");
+        loadFinance();
+      }
+    )
+
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "sales",
+      },
+      () => {
+        console.log("REALTIME: sales berubah");
+        loadFinance();
+      }
+    )
+
+    .subscribe((status, err) => {
+      console.log("FINANCE REALTIME STATUS:", status);
+
+      if (err) {
+        console.error("FINANCE REALTIME ERROR:", err);
+      }
+    });
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}, []);
 
   const manualIncome = financeTx.filter((t) => t.type === "in").reduce((a, t) => a + Number(t.amount || 0), 0);
   const expense = financeTx.filter((t) => t.type === "out").reduce((a, t) => a + Number(t.amount || 0), 0);
