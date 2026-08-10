@@ -246,7 +246,7 @@ export default function App() {
       {/* Main */}
       <main style={{ flex: 1, minWidth: 0, padding: isMobile ? "16px 14px 70px" : "22px 26px 60px", maxWidth: 1280, margin: "0 auto", width: "100%" }}>
         {page === "dashboard" && <Dashboard data={data} setPage={setPage} isMobile={isMobile} />}
-        {page === "kasir" && <Kasir data={data} persist={persist} showToast={showToast} currentUser={currentUser} storeName={data.storeName} isMobile={isMobile} />}
+        {page === "kasir" && <Kasir showToast={showToast} currentUser={currentUser} storeName={data.storeName} isMobile={isMobile} />}
         {page === "produk" && <Produk role={currentUser.role} showToast={showToast} />}
         {page === "ppob" && <Ppob data={data} persist={persist} showToast={showToast} currentUser={currentUser} isMobile={isMobile} />}
         {page === "keuangan" && <Keuangan data={data} persist={persist} showToast={showToast} isMobile={isMobile} />}
@@ -477,17 +477,31 @@ function Dashboard({ data, setPage, isMobile }) {
 const Empty = ({ text }) => <div style={{ fontSize: 13, color: "#94A3B8", padding: "18px 0", textAlign: "center" }}>{text}</div>;
 
 // ---------- Kasir (POS) ----------
-function Kasir({ data, persist, showToast, currentUser, storeName, isMobile }) {
+function Kasir({ showToast, currentUser, storeName, isMobile }) {
   const [query, setQuery] = useState("");
   const [cat, setCat] = useState("semua");
-  const [cart, setCart] = useState([]); // {productId, name, price, cost, qty, stock}
+  const [cart, setCart] = useState([]);
   const [payment, setPayment] = useState("cash");
+  const [paidAmount, setPaidAmount] = useState("");
   const [customer, setCustomer] = useState("");
   const [receipt, setReceipt] = useState(null);
+  const [products, setProducts] = useState([]);
+  const [loadingProducts, setLoadingProducts] = useState(true);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
 
-  const filtered = data.products.filter((p) =>
+  const loadProducts = async () => {
+    setLoadingProducts(true);
+    const { data: rows, error } = await supabase.from("products").select("*").order("name");
+    setLoadingProducts(false);
+    if (error) { showToast("Gagal memuat produk: " + error.message, "warn"); return; }
+    setProducts((rows || []).map(mapRowToProduct));
+  };
+
+  useEffect(() => { loadProducts(); }, []);
+
+  const filtered = products.filter((p) =>
     (cat === "semua" || p.category === cat) &&
-    p.name.toLowerCase().includes(query.toLowerCase())
+    (p.name.toLowerCase().includes(query.toLowerCase()) || (p.sku || "").toLowerCase().includes(query.toLowerCase()))
   );
 
   const addToCart = (p) => {
@@ -496,42 +510,67 @@ function Kasir({ data, persist, showToast, currentUser, storeName, isMobile }) {
       const ex = c.find((x) => x.productId === p.id);
       if (ex) {
         if (ex.qty >= p.stock) { showToast("Jumlah melebihi stok tersedia.", "warn"); return c; }
-        return c.map((x) => x.productId === p.id ? { ...x, qty: x.qty + 1 } : x);
+        return c.map((x) => x.productId === p.id ? { ...x, qty: x.qty + 1, stock: p.stock } : x);
       }
-      return [...c, { productId: p.id, name: p.name, price: p.price, cost: p.cost, qty: 1, stock: p.stock }];
+      return [...c, { productId: p.id, name: p.name, price: p.price, qty: 1, stock: p.stock }];
     });
   };
+
   const changeQty = (id, delta) => {
     setCart((c) => c.map((x) => {
       if (x.productId !== id) return x;
       const q = x.qty + delta;
-      if (q > x.stock) { showToast("Jumlah melebihi stok tersedia.", "warn"); return x; }
-      return { ...x, qty: q };
+      const latest = products.find((p) => p.id === id);
+      const available = latest?.stock ?? x.stock;
+      if (q > available) { showToast("Jumlah melebihi stok tersedia.", "warn"); return x; }
+      return { ...x, qty: q, stock: available };
     }).filter((x) => x.qty > 0));
   };
+
   const removeItem = (id) => setCart((c) => c.filter((x) => x.productId !== id));
   const total = cart.reduce((a, x) => a + x.price * x.qty, 0);
 
   const checkout = async () => {
     if (cart.length === 0) { showToast("Keranjang masih kosong.", "warn"); return; }
-    const sale = {
-      id: uid(), date: new Date().toISOString(), items: cart, total, payment,
-      customer: customer || "Umum", cashier: currentUser.name,
-    };
-    const products = data.products.map((p) => {
-      const item = cart.find((x) => x.productId === p.id);
-      return item ? { ...p, stock: p.stock - item.qty } : p;
+    const paid = payment === "cash" ? Number(paidAmount) : total;
+    if (payment === "cash" && (!Number.isFinite(paid) || paid < total)) {
+      showToast("Uang tunai kurang dari total belanja.", "warn"); return;
+    }
+
+    setCheckoutLoading(true);
+    const { data: result, error } = await supabase.rpc("create_sale", {
+      p_items: cart.map((x) => ({ product_id: x.productId, quantity: x.qty })),
+      p_payment_method: payment,
+      p_paid_amount: paid,
+      p_customer_name: customer.trim() || null,
     });
-    const stockLog = [...data.stockLog, ...cart.map((x) => ({
-      id: uid(), date: new Date().toISOString(), productId: x.productId, productName: x.name, type: "out", qty: x.qty, note: "Penjualan kasir",
-    }))];
-    const financeTx = [...data.financeTx, {
-      id: uid(), date: new Date().toISOString(), type: "in", category: "Penjualan", amount: total, note: `Penjualan #${sale.id.slice(-5)}`,
-    }];
-    await persist({ ...data, products, stockLog, financeTx, sales: [...data.sales, sale] });
+    setCheckoutLoading(false);
+
+    if (error) {
+      showToast("Transaksi gagal: " + error.message, "warn");
+      await loadProducts();
+      return;
+    }
+
+    const saleResult = Array.isArray(result) ? result[0] : result;
+    const sale = {
+      id: saleResult.sale_id,
+      invoiceNumber: saleResult.invoice_number,
+      date: saleResult.created_at,
+      items: cart.map((x) => ({ ...x })),
+      total: Number(saleResult.total_amount),
+      payment,
+      paidAmount: Number(saleResult.paid_amount),
+      changeAmount: Number(saleResult.change_amount),
+      customer: customer || "Umum",
+      cashier: currentUser.name,
+    };
     setReceipt(sale);
-    setCart([]); setCustomer("");
-    showToast("Transaksi berhasil disimpan.");
+    setCart([]);
+    setCustomer("");
+    setPaidAmount("");
+    showToast(`Transaksi berhasil • ${sale.invoiceNumber}`);
+    await loadProducts();
   };
 
   return (
@@ -542,26 +581,28 @@ function Kasir({ data, persist, showToast, currentUser, storeName, isMobile }) {
           <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
             <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
               <Search size={15} style={{ position: "absolute", left: 10, top: 11, color: "#94A3B8" }} />
-              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari produk atau scan barcode…" style={{ paddingLeft: 32 }} />
+              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari produk / SKU…" style={{ paddingLeft: 32 }} />
             </div>
             <Select value={cat} onChange={(e) => setCat(e.target.value)} style={{ width: isMobile ? "100%" : 190 }}>
               <option value="semua">Semua Kategori</option>
               {Object.entries(CATEGORY_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </Select>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill,minmax(${isMobile ? 128 : 150}px,1fr))`, gap: 10, maxHeight: isMobile ? 360 : 480, overflowY: "auto" }}>
-            {filtered.length === 0 && <Empty text="Produk tidak ditemukan." />}
-            {filtered.map((p) => (
-              <button key={p.id} onClick={() => addToCart(p)} disabled={p.stock <= 0} style={{
-                textAlign: "left", border: "1px solid #E7E9EE", borderRadius: 10, padding: 11, cursor: p.stock > 0 ? "pointer" : "not-allowed",
-                background: p.stock > 0 ? "#fff" : "#F8FAFC", opacity: p.stock > 0 ? 1 : 0.55
-              }}>
-                <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6, minHeight: 32 }}>{p.name}</div>
-                <div style={{ fontSize: 13.5, fontWeight: 700, color: "#2563EB" }}>{rupiah(p.price)}</div>
-                <div style={{ fontSize: 11, color: p.stock <= p.minStock ? "#D97706" : "#94A3B8", marginTop: 3 }}>Stok: {p.stock}</div>
-              </button>
-            ))}
-          </div>
+          {loadingProducts ? <Empty text="Memuat produk…" /> : (
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill,minmax(${isMobile ? 128 : 150}px,1fr))`, gap: 10, maxHeight: isMobile ? 360 : 480, overflowY: "auto" }}>
+              {filtered.length === 0 && <Empty text="Produk tidak ditemukan." />}
+              {filtered.map((p) => (
+                <button key={p.id} onClick={() => addToCart(p)} disabled={p.stock <= 0} style={{
+                  textAlign: "left", border: "1px solid #E7E9EE", borderRadius: 10, padding: 11, cursor: p.stock > 0 ? "pointer" : "not-allowed",
+                  background: p.stock > 0 ? "#fff" : "#F8FAFC", opacity: p.stock > 0 ? 1 : 0.55
+                }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6, minHeight: 32 }}>{p.name}</div>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: "#2563EB" }}>{rupiah(p.price)}</div>
+                  <div style={{ fontSize: 11, color: p.stock <= p.minStock ? "#D97706" : "#94A3B8", marginTop: 3 }}>Stok: {p.stock}</div>
+                </button>
+              ))}
+            </div>
+          )}
         </Card>
 
         <Card style={isMobile ? {} : { position: "sticky", top: 20 }}>
@@ -588,7 +629,7 @@ function Kasir({ data, persist, showToast, currentUser, storeName, isMobile }) {
           <div style={{ marginBottom: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Metode Pembayaran</div>
             <div style={{ display: "flex", gap: 6 }}>
-              {["cash", "transfer", "e-wallet"].map((m) => (
+              {["cash", "transfer", "qris"].map((m) => (
                 <button key={m} onClick={() => setPayment(m)} style={{
                   flex: 1, padding: "8px 4px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
                   border: payment === m ? "1.5px solid #2563EB" : "1px solid #D8DCE3", background: payment === m ? "#EFF6FF" : "#fff",
@@ -597,10 +638,20 @@ function Kasir({ data, persist, showToast, currentUser, storeName, isMobile }) {
               ))}
             </div>
           </div>
+          {payment === "cash" && (
+            <Input type="number" min="0" placeholder="Uang diterima" value={paidAmount} onChange={(e) => setPaidAmount(e.target.value)} style={{ marginBottom: 10 }} />
+          )}
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 700, borderTop: "1px dashed #E2E8F0", paddingTop: 12, marginBottom: 12 }}>
             <span>Total</span><span style={{ color: "#2563EB" }}>{rupiah(total)}</span>
           </div>
-          <Btn onClick={checkout} style={{ width: "100%", justifyContent: "center" }}>Proses Pembayaran</Btn>
+          {payment === "cash" && Number(paidAmount) >= total && total > 0 && (
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginTop: -5, marginBottom: 12, color: "#64748B" }}>
+              <span>Estimasi kembalian</span><span>{rupiah(Number(paidAmount) - total)}</span>
+            </div>
+          )}
+          <Btn onClick={checkout} disabled={checkoutLoading} style={{ width: "100%", justifyContent: "center" }}>
+            {checkoutLoading ? "Memproses…" : "Proses Pembayaran"}
+          </Btn>
         </Card>
       </div>
 
@@ -613,7 +664,7 @@ const miniBtn = { width: 22, height: 22, borderRadius: 6, border: "1px solid #D8
 function ReceiptModal({ sale, storeName, onClose }) {
   const text = `*${storeName}*\n${new Date(sale.date).toLocaleString("id-ID")}\nKasir: ${sale.cashier}\nPelanggan: ${sale.customer}\n\n` +
     sale.items.map((i) => `${i.name} x${i.qty} = ${rupiah(i.price * i.qty)}`).join("\n") +
-    `\n\nTOTAL: ${rupiah(sale.total)}\nBayar: ${sale.payment}\n\nTerima kasih telah berbelanja!`;
+    `\n\nInvoice: ${sale.invoiceNumber || sale.id}\nTOTAL: ${rupiah(sale.total)}\nBayar: ${sale.payment}${sale.payment === "cash" ? `\nTunai: ${rupiah(sale.paidAmount)}\nKembali: ${rupiah(sale.changeAmount)}` : ""}\n\nTerima kasih telah berbelanja!`;
   const waLink = "https://wa.me/?text=" + encodeURIComponent(text);
   return (
     <Modal title="Struk Transaksi" onClose={onClose} width={380}>
