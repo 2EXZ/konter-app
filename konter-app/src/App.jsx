@@ -249,7 +249,7 @@ export default function App() {
         {page === "kasir" && <Kasir showToast={showToast} currentUser={currentUser} storeName={data.storeName} isMobile={isMobile} />}
         {page === "produk" && <Produk role={currentUser.role} showToast={showToast} />}
         {page === "ppob" && <Ppob data={data} persist={persist} showToast={showToast} currentUser={currentUser} isMobile={isMobile} />}
-        {page === "keuangan" && <Keuangan data={data} persist={persist} showToast={showToast} isMobile={isMobile} />}
+        {page === "keuangan" && <Keuangan showToast={showToast} isMobile={isMobile} currentUser={currentUser} />}
         {page === "laporan" && <Laporan data={data} isMobile={isMobile} />}
         {page === "pengguna" && <Pengguna currentUser={currentUser} showToast={showToast} />}
       </main>
@@ -1080,45 +1080,85 @@ function Ppob({ data, persist, showToast, currentUser, isMobile }) {
 }
 
 // ---------- Keuangan ----------
-function Keuangan({ data, persist, showToast, isMobile }) {
+function Keuangan({ showToast, isMobile, currentUser }) {
   const [tab, setTab] = useState("kas");
   const [txModal, setTxModal] = useState(false);
   const [debtModal, setDebtModal] = useState(false);
+  const [financeTx, setFinanceTx] = useState([]);
+  const [debts, setDebts] = useState([]);
+  const [salesOmzet, setSalesOmzet] = useState(0);
+  const [loadingFinance, setLoadingFinance] = useState(true);
 
-  const income = data.financeTx.filter((t) => t.type === "in").reduce((a, t) => a + t.amount, 0);
-  const expense = data.financeTx.filter((t) => t.type === "out").reduce((a, t) => a + t.amount, 0);
+  const loadFinance = async () => {
+    const [txRes, debtRes, salesRes] = await Promise.all([
+      supabase.from("finance_transactions").select("*").order("created_at", { ascending: false }),
+      supabase.from("debts").select("*").order("created_at", { ascending: false }),
+      supabase.from("sales").select("total_amount"),
+    ]);
+    if (txRes.error) showToast("Gagal memuat keuangan: " + txRes.error.message, "warn");
+    if (debtRes.error) showToast("Gagal memuat piutang: " + debtRes.error.message, "warn");
+    if (!txRes.error) setFinanceTx(txRes.data || []);
+    if (!debtRes.error) setDebts(debtRes.data || []);
+    if (!salesRes.error) setSalesOmzet((salesRes.data || []).reduce((a, x) => a + Number(x.total_amount || 0), 0));
+    setLoadingFinance(false);
+  };
+
+  useEffect(() => {
+    loadFinance();
+    const channel = supabase.channel("finance-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "finance_transactions" }, loadFinance)
+      .on("postgres_changes", { event: "*", schema: "public", table: "debts" }, loadFinance)
+      .on("postgres_changes", { event: "*", schema: "public", table: "sales" }, loadFinance)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
+  const manualIncome = financeTx.filter((t) => t.type === "in").reduce((a, t) => a + Number(t.amount || 0), 0);
+  const expense = financeTx.filter((t) => t.type === "out").reduce((a, t) => a + Number(t.amount || 0), 0);
+  const operationalBalance = salesOmzet + manualIncome - expense;
 
   const addTx = async (tx) => {
-    await persist({ ...data, financeTx: [...data.financeTx, { ...tx, id: uid(), date: new Date().toISOString() }] });
+    const { error } = await supabase.from("finance_transactions").insert({
+      type: tx.type,
+      category: tx.category.trim(),
+      amount: Number(tx.amount),
+      note: tx.note?.trim() || null,
+      user_id: currentUser.id,
+    });
+    if (error) return showToast("Gagal menyimpan: " + error.message, "warn");
     setTxModal(false); showToast("Catatan keuangan ditambahkan.");
+    await loadFinance();
   };
   const addDebt = async (d) => {
-    await persist({ ...data, debts: [...data.debts, { ...d, id: uid(), date: new Date().toISOString(), paid: 0, status: "belum lunas" }] });
+    const { error } = await supabase.from("debts").insert({
+      customer: d.customer.trim(), amount: Number(d.amount), note: d.note?.trim() || null, created_by: currentUser.id
+    });
+    if (error) return showToast("Gagal menyimpan piutang: " + error.message, "warn");
     setDebtModal(false); showToast("Data utang-piutang ditambahkan.");
+    await loadFinance();
   };
   const payDebt = async (id, amount) => {
-    const debts = data.debts.map((d) => {
-      if (d.id !== id) return d;
-      const paid = d.paid + amount;
-      return { ...d, paid, status: paid >= d.amount ? "lunas" : "belum lunas" };
-    });
-    const financeTx = [...data.financeTx, { id: uid(), date: new Date().toISOString(), type: "in", category: "Pelunasan Piutang", amount, note: "Pembayaran piutang" }];
-    await persist({ ...data, debts, financeTx });
+    const { error } = await supabase.rpc("pay_debt", { p_debt_id: id, p_amount: Number(amount) });
+    if (error) return showToast("Gagal mencatat pembayaran: " + error.message, "warn");
     showToast("Pembayaran dicatat.");
+    await loadFinance();
   };
+
+  if (loadingFinance) return <div style={{ padding: 30, textAlign: "center" }}>Memuat keuangan...</div>;
 
   return (
     <div>
-      <PageTitle title="Keuangan" subtitle="Kas harian, laba rugi sederhana, dan utang-piutang pelanggan"
+      <PageTitle title="Keuangan" subtitle="Kas harian, omzet penjualan, dan utang-piutang pelanggan"
         right={<div style={{ display: "flex", gap: 8, width: isMobile ? "100%" : "auto" }}>
           <Btn variant="outline" onClick={() => setDebtModal(true)} style={isMobile ? { flex: 1, justifyContent: "center" } : {}}><Plus size={14} /> Utang/Piutang</Btn>
           <Btn onClick={() => setTxModal(true)} style={isMobile ? { flex: 1, justifyContent: "center" } : {}}><Plus size={14} /> Catat Transaksi</Btn>
         </div>} />
 
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3,1fr)", gap: 14, marginBottom: 16 }}>
-        <Card><div style={{ fontSize: 12, color: "#64748B" }}>Total Pemasukan</div><div style={{ fontSize: 19, fontWeight: 700, color: "#1FAE7A" }}>{rupiah(income)}</div></Card>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(4,1fr)", gap: 14, marginBottom: 16 }}>
+        <Card><div style={{ fontSize: 12, color: "#64748B" }}>Omzet Penjualan</div><div style={{ fontSize: 19, fontWeight: 700, color: "#2563EB" }}>{rupiah(salesOmzet)}</div></Card>
+        <Card><div style={{ fontSize: 12, color: "#64748B" }}>Pemasukan Lain</div><div style={{ fontSize: 19, fontWeight: 700, color: "#1FAE7A" }}>{rupiah(manualIncome)}</div></Card>
         <Card><div style={{ fontSize: 12, color: "#64748B" }}>Total Pengeluaran</div><div style={{ fontSize: 19, fontWeight: 700, color: "#DC2626" }}>{rupiah(expense)}</div></Card>
-        <Card><div style={{ fontSize: 12, color: "#64748B" }}>Saldo / Profit</div><div style={{ fontSize: 19, fontWeight: 700 }}>{rupiah(income - expense)}</div></Card>
+        <Card><div style={{ fontSize: 12, color: "#64748B" }}>Saldo Operasional</div><div style={{ fontSize: 19, fontWeight: 700 }}>{rupiah(operationalBalance)}</div></Card>
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
@@ -1133,58 +1173,48 @@ function Keuangan({ data, persist, showToast, isMobile }) {
 
       {tab === "kas" && (
         <Card>
+          <div style={{ fontSize: 12, color: "#64748B", marginBottom: 10 }}>Penjualan kasir dihitung langsung dari tabel sales dan tidak diduplikasi sebagai pemasukan manual.</div>
           <div style={{ overflowX: "auto" }}>
             <table>
               <thead><tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
                 <th style={th}>Tanggal</th><th style={th}>Kategori</th><th style={th}>Catatan</th><th style={th}>Jenis</th><th style={th}>Jumlah</th>
               </tr></thead>
               <tbody>
-                {[...data.financeTx].sort((a, b) => b.date.localeCompare(a.date)).map((t) => (
+                {financeTx.map((t) => (
                   <tr key={t.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 13 }}>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{new Date(t.date).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</td>
-                    <td style={td}>{t.category}</td>
-                    <td style={td}>{t.note}</td>
+                    <td style={{ ...td, whiteSpace: "nowrap" }}>{new Date(t.created_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</td>
+                    <td style={td}>{t.category}</td><td style={td}>{t.note || "-"}</td>
                     <td style={td}><Badge tone={t.type === "in" ? "green" : "red"}>{t.type === "in" ? "Masuk" : "Keluar"}</Badge></td>
-                    <td style={{ ...td, fontWeight: 700, color: t.type === "in" ? "#1FAE7A" : "#DC2626", whiteSpace: "nowrap" }}>{t.type === "in" ? "+" : "-"}{rupiah(t.amount)}</td>
+                    <td style={{ ...td, fontWeight: 700, color: t.type === "in" ? "#1FAE7A" : "#DC2626", whiteSpace: "nowrap" }}>{t.type === "in" ? "+" : "-"}{rupiah(Number(t.amount))}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          {data.financeTx.length === 0 && <Empty text="Belum ada catatan keuangan." />}
+          {financeTx.length === 0 && <Empty text="Belum ada catatan keuangan manual." />}
         </Card>
       )}
 
       {tab === "piutang" && (
-        <Card>
-          <div style={{ overflowX: "auto" }}>
-            <table>
-              <thead><tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
-                <th style={th}>Pelanggan</th><th style={th}>Total</th><th style={th}>Terbayar</th><th style={th}>Sisa</th><th style={th}>Status</th><th style={th}></th>
-              </tr></thead>
-              <tbody>
-                {data.debts.map((d) => (
-                  <tr key={d.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 13 }}>
-                    <td style={td}><div style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{d.customer}</div><div style={{ fontSize: 11, color: "#94A3B8" }}>{d.note}</div></td>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{rupiah(d.amount)}</td>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{rupiah(d.paid)}</td>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{rupiah(d.amount - d.paid)}</td>
-                    <td style={td}><Badge tone={d.status === "lunas" ? "green" : "amber"}>{d.status}</Badge></td>
-                    <td style={td}>
-                      {d.status !== "lunas" && (
-                        <Btn variant="outline" style={{ padding: "5px 9px", fontSize: 12, whiteSpace: "nowrap" }} onClick={() => {
-                          const amt = Number(prompt("Jumlah pembayaran:", d.amount - d.paid));
-                          if (amt > 0) payDebt(d.id, amt);
-                        }}>Bayar</Btn>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {data.debts.length === 0 && <Empty text="Belum ada data utang-piutang." />}
-        </Card>
+        <Card><div style={{ overflowX: "auto" }}><table>
+          <thead><tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
+            <th style={th}>Pelanggan</th><th style={th}>Total</th><th style={th}>Terbayar</th><th style={th}>Sisa</th><th style={th}>Status</th><th style={th}></th>
+          </tr></thead>
+          <tbody>{debts.map((d) => (
+            <tr key={d.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 13 }}>
+              <td style={td}><div style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{d.customer}</div><div style={{ fontSize: 11, color: "#94A3B8" }}>{d.note}</div></td>
+              <td style={{ ...td, whiteSpace: "nowrap" }}>{rupiah(Number(d.amount))}</td>
+              <td style={{ ...td, whiteSpace: "nowrap" }}>{rupiah(Number(d.paid))}</td>
+              <td style={{ ...td, whiteSpace: "nowrap" }}>{rupiah(Number(d.amount) - Number(d.paid))}</td>
+              <td style={td}><Badge tone={d.status === "lunas" ? "green" : "amber"}>{d.status}</Badge></td>
+              <td style={td}>{d.status !== "lunas" && <Btn variant="outline" style={{ padding: "5px 9px", fontSize: 12, whiteSpace: "nowrap" }} onClick={() => {
+                const remaining = Number(d.amount) - Number(d.paid);
+                const amt = Number(prompt("Jumlah pembayaran:", remaining));
+                if (amt > 0) payDebt(d.id, amt);
+              }}>Bayar</Btn>}</td>
+            </tr>
+          ))}</tbody>
+        </table></div>{debts.length === 0 && <Empty text="Belum ada data utang-piutang." />}</Card>
       )}
 
       {txModal && <TxModal onSave={addTx} onClose={() => setTxModal(false)} />}
@@ -1194,37 +1224,22 @@ function Keuangan({ data, persist, showToast, isMobile }) {
 }
 function TxModal({ onSave, onClose }) {
   const [f, setF] = useState({ type: "in", category: "", amount: "", note: "" });
-  return (
-    <Modal title="Catat Transaksi Keuangan" onClose={onClose} width={380}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <div style={{ display: "flex", gap: 6 }}>
-          {["in", "out"].map((t) => (
-            <button key={t} onClick={() => setF({ ...f, type: t })} style={{
-              flex: 1, padding: "8px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
-              border: f.type === t ? "1.5px solid #2563EB" : "1px solid #D8DCE3", background: f.type === t ? "#EFF6FF" : "#fff"
-            }}>{t === "in" ? "Pemasukan" : "Pengeluaran"}</button>
-          ))}
-        </div>
-        <Field label="Kategori"><Input value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} placeholder="mis. Sewa tempat, Listrik toko" /></Field>
-        <Field label="Jumlah"><Input type="number" value={f.amount} onChange={(e) => setF({ ...f, amount: Number(e.target.value) })} /></Field>
-        <Field label="Catatan"><Input value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
-        <Btn onClick={() => f.category && f.amount && onSave(f)} style={{ justifyContent: "center" }}>Simpan</Btn>
-      </div>
-    </Modal>
-  );
+  return <Modal title="Catat Transaksi Keuangan" onClose={onClose} width={380}><div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div style={{ display: "flex", gap: 6 }}>{["in", "out"].map((t) => <button key={t} onClick={() => setF({ ...f, type: t })} style={{ flex:1,padding:"8px",borderRadius:8,fontSize:12.5,fontWeight:600,cursor:"pointer",border:f.type===t?"1.5px solid #2563EB":"1px solid #D8DCE3",background:f.type===t?"#EFF6FF":"#fff" }}>{t === "in" ? "Pemasukan" : "Pengeluaran"}</button>)}</div>
+    <Field label="Kategori"><Input value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} placeholder="mis. Sewa tempat, Listrik toko" /></Field>
+    <Field label="Jumlah"><Input type="number" min="1" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field>
+    <Field label="Catatan"><Input value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
+    <Btn onClick={() => f.category.trim() && Number(f.amount) > 0 && onSave(f)} style={{ justifyContent:"center" }}>Simpan</Btn>
+  </div></Modal>;
 }
 function DebtModal({ onSave, onClose }) {
   const [f, setF] = useState({ customer: "", amount: "", note: "" });
-  return (
-    <Modal title="Tambah Utang / Piutang Pelanggan" onClose={onClose} width={380}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <Field label="Nama Pelanggan"><Input value={f.customer} onChange={(e) => setF({ ...f, customer: e.target.value })} /></Field>
-        <Field label="Jumlah"><Input type="number" value={f.amount} onChange={(e) => setF({ ...f, amount: Number(e.target.value) })} /></Field>
-        <Field label="Catatan"><Input value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="mis. Ambil barang belum bayar" /></Field>
-        <Btn onClick={() => f.customer && f.amount && onSave(f)} style={{ justifyContent: "center" }}>Simpan</Btn>
-      </div>
-    </Modal>
-  );
+  return <Modal title="Tambah Utang / Piutang Pelanggan" onClose={onClose} width={380}><div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+    <Field label="Nama Pelanggan"><Input value={f.customer} onChange={(e) => setF({ ...f, customer:e.target.value })} /></Field>
+    <Field label="Jumlah"><Input type="number" min="1" value={f.amount} onChange={(e) => setF({ ...f, amount:e.target.value })} /></Field>
+    <Field label="Catatan"><Input value={f.note} onChange={(e) => setF({ ...f, note:e.target.value })} placeholder="mis. Ambil barang belum bayar" /></Field>
+    <Btn onClick={() => f.customer.trim() && Number(f.amount) > 0 && onSave(f)} style={{ justifyContent:"center" }}>Simpan</Btn>
+  </div></Modal>;
 }
 
 // ---------- Laporan ----------
