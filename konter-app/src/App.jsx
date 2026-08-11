@@ -245,12 +245,12 @@ export default function App() {
 
       {/* Main */}
       <main style={{ flex: 1, minWidth: 0, padding: isMobile ? "16px 14px 70px" : "22px 26px 60px", maxWidth: 1280, margin: "0 auto", width: "100%" }}>
-        {page === "dashboard" && <Dashboard data={data} setPage={setPage} isMobile={isMobile} />}
+        {page === "dashboard" && <Dashboard setPage={setPage} isMobile={isMobile} showToast={showToast} currentUser={currentUser} />}
         {page === "kasir" && <Kasir showToast={showToast} currentUser={currentUser} storeName={data.storeName} isMobile={isMobile} />}
         {page === "produk" && <Produk role={currentUser.role} showToast={showToast} />}
         {page === "ppob" && <Ppob showToast={showToast} currentUser={currentUser} isMobile={isMobile} />}
         {page === "keuangan" && <Keuangan showToast={showToast} isMobile={isMobile} currentUser={currentUser} />}
-        {page === "laporan" && <Laporan data={data} isMobile={isMobile} />}
+        {page === "laporan" && <Laporan isMobile={isMobile} showToast={showToast} />}
         {page === "pengguna" && <Pengguna currentUser={currentUser} showToast={showToast} />}
       </main>
 
@@ -395,14 +395,113 @@ function LoginScreen({ storeName }) {
 }
 
 // ---------- Dashboard ----------
-function Dashboard({ data, setPage, isMobile }) {
-  const today = todayStr();
-  const salesToday = data.sales.filter((s) => s.date.slice(0, 10) === today);
-  const omzetToday = salesToday.reduce((a, s) => a + s.total, 0);
-  const profitToday = salesToday.reduce((a, s) => a + s.items.reduce((x, it) => x + (it.price - (it.cost || 0)) * it.qty, 0), 0);
-  const lowStock = data.products.filter((p) => p.category !== "pulsa" && p.stock <= p.minStock);
-  const totalDebt = data.debts.filter((d) => d.status !== "lunas").reduce((a, d) => a + (d.amount - d.paid), 0);
-  const recentSales = [...data.sales].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
+function Dashboard({ setPage, isMobile, showToast, currentUser }) {
+  const [salesToday, setSalesToday] = useState([]);
+  const [recentSales, setRecentSales] = useState([]);
+  const [lowStock, setLowStock] = useState([]);
+  const [totalDebt, setTotalDebt] = useState(0);
+  const [loadingDashboard, setLoadingDashboard] = useState(true);
+
+  const loadDashboard = async () => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+
+    const [todayRes, recentRes, productsRes, debtsRes] = await Promise.all([
+      supabase
+        .from("sales")
+        .select("id, invoice_number, total_amount, total_profit, profit, payment_method, customer_name, cashier_name, created_at")
+        .gte("created_at", start.toISOString())
+        .lt("created_at", end.toISOString())
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("sales")
+        .select("id, invoice_number, total_amount, payment_method, customer_name, cashier_name, created_at")
+        .order("created_at", { ascending: false })
+        .limit(6),
+      supabase
+        .from("products")
+        .select("id, name, category, stock, minimum_stock")
+        .order("name"),
+      supabase
+        .from("debts")
+        .select("amount, paid, status")
+        .neq("status", "lunas"),
+    ]);
+
+    if (todayRes.error) showToast("Gagal memuat dashboard penjualan: " + todayRes.error.message, "warn");
+    if (recentRes.error) showToast("Gagal memuat transaksi terbaru: " + recentRes.error.message, "warn");
+    if (productsRes.error) showToast("Gagal memuat stok dashboard: " + productsRes.error.message, "warn");
+
+    const todayRows = todayRes.error ? [] : (todayRes.data || []);
+    const recentRows = recentRes.error ? [] : (recentRes.data || []);
+    const productRows = productsRes.error ? [] : (productsRes.data || []);
+
+    let itemRows = [];
+    if (recentRows.length > 0) {
+      const { data: items, error: itemError } = await supabase
+        .from("sale_items")
+        .select("sale_id, product_name, quantity")
+        .in("sale_id", recentRows.map((s) => s.id));
+      if (!itemError) itemRows = items || [];
+    }
+
+    const itemMap = {};
+    itemRows.forEach((it) => {
+      if (!itemMap[it.sale_id]) itemMap[it.sale_id] = [];
+      itemMap[it.sale_id].push({
+        name: it.product_name,
+        qty: Number(it.quantity) || 0,
+      });
+    });
+
+    setSalesToday(todayRows);
+    setRecentSales(recentRows.map((s) => ({
+      ...s,
+      items: itemMap[s.id] || [],
+    })));
+    setLowStock(productRows
+      .filter((p) => p.category !== "pulsa" && Number(p.stock) <= Number(p.minimum_stock || 0))
+      .map((p) => ({
+        id: p.id,
+        name: p.name,
+        stock: Number(p.stock) || 0,
+        minStock: Number(p.minimum_stock) || 0,
+      }))
+    );
+
+    if (!debtsRes.error) {
+      setTotalDebt((debtsRes.data || []).reduce(
+        (sum, d) => sum + Math.max(Number(d.amount || 0) - Number(d.paid || 0), 0),
+        0
+      ));
+    } else {
+      // Cashier memang tidak punya akses tabel debts; jangan jadikan error dashboard.
+      setTotalDebt(0);
+    }
+
+    setLoadingDashboard(false);
+  };
+
+  useEffect(() => {
+    loadDashboard();
+
+    const channel = supabase
+      .channel("dashboard-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "sales" }, loadDashboard)
+      .on("postgres_changes", { event: "*", schema: "public", table: "products" }, loadDashboard)
+      .on("postgres_changes", { event: "*", schema: "public", table: "debts" }, loadDashboard)
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
+  const omzetToday = salesToday.reduce((a, s) => a + Number(s.total_amount || 0), 0);
+  const profitToday = salesToday.reduce(
+    (a, s) => a + Number(s.profit ?? s.total_profit ?? 0),
+    0
+  );
 
   const stats = [
     { label: "Omzet Hari Ini", value: rupiah(omzetToday), icon: TrendingUp, tone: "#2563EB" },
@@ -411,9 +510,17 @@ function Dashboard({ data, setPage, isMobile }) {
     { label: "Stok Menipis", value: lowStock.length, icon: AlertTriangle, tone: "#D97706" },
   ];
 
+  if (loadingDashboard) {
+    return <div style={{ padding: 30, textAlign: "center" }}>Memuat dashboard...</div>;
+  }
+
   return (
     <div>
-      <PageTitle title="Dashboard" subtitle={`Ringkasan operasional — ${new Date().toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}`} />
+      <PageTitle
+        title="Dashboard"
+        subtitle={`Ringkasan operasional — ${new Date().toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}`}
+      />
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 14, marginBottom: 18 }}>
         {stats.map((s, i) => (
           <Card key={i}>
@@ -435,18 +542,28 @@ function Dashboard({ data, setPage, isMobile }) {
           <div style={{ fontWeight: 700, fontSize: 14.5, marginBottom: 12 }}>Transaksi Terbaru</div>
           {recentSales.length === 0 ? <Empty text="Belum ada transaksi penjualan." /> : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {recentSales.map((s) => (
-                <div key={s.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "8px 0", borderBottom: "1px solid #F1F5F9" }}>
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{s.items.map((i) => i.name).join(", ").slice(0, 40)}{s.items.map(i=>i.name).join(", ").length>40?"…":""}</div>
-                    <div style={{ color: "#94A3B8", fontSize: 11.5 }}>{new Date(s.date).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })} · {s.payment}</div>
+              {recentSales.map((s) => {
+                const itemText = s.items.length
+                  ? s.items.map((i) => `${i.name}${i.qty > 1 ? ` ×${i.qty}` : ""}`).join(", ")
+                  : (s.invoice_number || "Transaksi penjualan");
+                return (
+                  <div key={s.id} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, padding: "8px 0", borderBottom: "1px solid #F1F5F9" }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: isMobile ? 210 : 420 }}>{itemText}</div>
+                      <div style={{ color: "#94A3B8", fontSize: 11.5 }}>
+                        {new Date(s.created_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}
+                        {" · "}{s.payment_method}
+                        {s.cashier_name ? ` · ${s.cashier_name}` : ""}
+                      </div>
+                    </div>
+                    <div style={{ fontWeight: 700, color: "#2563EB", whiteSpace: "nowrap" }}>{rupiah(Number(s.total_amount || 0))}</div>
                   </div>
-                  <div style={{ fontWeight: 700, color: "#2563EB" }}>{rupiah(s.total)}</div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </Card>
+
         <Card>
           <div style={{ fontWeight: 700, fontSize: 14.5, marginBottom: 12, display: "flex", alignItems: "center", gap: 7 }}>
             <AlertTriangle size={15} color="#D97706" /> Stok Menipis
@@ -461,10 +578,12 @@ function Dashboard({ data, setPage, isMobile }) {
               ))}
             </div>
           )}
+
           <Btn variant="outline" style={{ marginTop: 14, width: "100%", justifyContent: "center" }} onClick={() => setPage("produk")}>
             Kelola Stok <ChevronRight size={14} />
           </Btn>
-          {totalDebt > 0 && (
+
+          {currentUser.role === "owner" && totalDebt > 0 && (
             <div style={{ marginTop: 14, background: "#FFF7ED", border: "1px solid #FED7AA", borderRadius: 9, padding: 10, fontSize: 12.5 }}>
               Total piutang pelanggan belum lunas: <b>{rupiah(totalDebt)}</b>
             </div>
@@ -1303,61 +1422,191 @@ function DebtModal({ onSave, onClose }) {
 }
 
 // ---------- Laporan ----------
-function Laporan({ data, isMobile }) {
-  const [range, setRange] = useState("7"); // days
+function Laporan({ isMobile, showToast }) {
+  const [range, setRange] = useState("7");
+  const [sales, setSales] = useState([]);
+  const [items, setItems] = useState([]);
+  const [loadingReport, setLoadingReport] = useState(true);
   const days = Number(range);
-  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days);
-  const salesInRange = data.sales.filter((s) => new Date(s.date) >= cutoff);
-  const omzet = salesInRange.reduce((a, s) => a + s.total, 0);
-  const profit = salesInRange.reduce((a, s) => a + s.items.reduce((x, it) => x + (it.price - (it.cost || 0)) * it.qty, 0), 0);
+
+  const rangeStart = () => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - (days - 1));
+    return d;
+  };
+
+  const loadReport = async () => {
+    setLoadingReport(true);
+    const start = rangeStart();
+
+    const salesRes = await supabase
+      .from("sales")
+      .select("id, invoice_number, customer_name, cashier_name, payment_method, total_amount, total_profit, profit, created_at")
+      .gte("created_at", start.toISOString())
+      .order("created_at", { ascending: true });
+
+    if (salesRes.error) {
+      showToast("Gagal memuat laporan penjualan: " + salesRes.error.message, "warn");
+      setSales([]);
+      setItems([]);
+      setLoadingReport(false);
+      return;
+    }
+
+    const saleRows = salesRes.data || [];
+    let itemRows = [];
+
+    if (saleRows.length > 0) {
+      const itemRes = await supabase
+        .from("sale_items")
+        .select("sale_id, product_id, product_name, sku, quantity, purchase_price, selling_price, subtotal, profit, created_at")
+        .in("sale_id", saleRows.map((s) => s.id))
+        .order("created_at", { ascending: true });
+
+      if (itemRes.error) {
+        showToast("Gagal memuat item laporan: " + itemRes.error.message, "warn");
+      } else {
+        itemRows = itemRes.data || [];
+      }
+    }
+
+    setSales(saleRows);
+    setItems(itemRows);
+    setLoadingReport(false);
+  };
+
+  useEffect(() => {
+    loadReport();
+  }, [range]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel("report-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "sales" }, loadReport)
+      .on("postgres_changes", { event: "*", schema: "public", table: "sale_items" }, loadReport)
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [range]);
+
+  const omzet = sales.reduce((a, s) => a + Number(s.total_amount || 0), 0);
+  const profit = sales.reduce((a, s) => a + Number(s.profit ?? s.total_profit ?? 0), 0);
 
   const byDay = useMemo(() => {
     const map = {};
     for (let i = days - 1; i >= 0; i--) {
-      const d = new Date(); d.setDate(d.getDate() - i);
-      map[d.toISOString().slice(0, 10)] = 0;
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - i);
+      const key = [
+        d.getFullYear(),
+        String(d.getMonth() + 1).padStart(2, "0"),
+        String(d.getDate()).padStart(2, "0"),
+      ].join("-");
+      map[key] = 0;
     }
-    salesInRange.forEach((s) => { const k = s.date.slice(0, 10); if (k in map) map[k] += s.total; });
-    return Object.entries(map).map(([date, total]) => ({ date: date.slice(5), total }));
-  }, [salesInRange, days]);
+
+    sales.forEach((s) => {
+      const d = new Date(s.created_at);
+      const key = [
+        d.getFullYear(),
+        String(d.getMonth() + 1).padStart(2, "0"),
+        String(d.getDate()).padStart(2, "0"),
+      ].join("-");
+      if (key in map) map[key] += Number(s.total_amount || 0);
+    });
+
+    return Object.entries(map).map(([date, total]) => ({
+      date: date.slice(5),
+      total,
+    }));
+  }, [sales, days]);
 
   const topProducts = useMemo(() => {
     const map = {};
-    salesInRange.forEach((s) => s.items.forEach((it) => {
-      map[it.name] = (map[it.name] || 0) + it.qty;
-    }));
-    return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, qty]) => ({ name, qty }));
-  }, [salesInRange]);
+    items.forEach((it) => {
+      const name = it.product_name || "Produk";
+      map[name] = (map[name] || 0) + Number(it.quantity || 0);
+    });
+    return Object.entries(map)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([name, qty]) => ({ name, qty }));
+  }, [items]);
 
   const COLORS = ["#2563EB", "#0EA5E9", "#7C3AED", "#D97706", "#DC2626", "#0D9488"];
 
+  const csvCell = (value) => {
+    const text = String(value ?? "");
+    return `"${text.replaceAll('"', '""')}"`;
+  };
+
   const exportCsv = () => {
-    const rows = [["Tanggal", "Item", "Qty", "Total", "Pembayaran", "Pelanggan"]];
-    salesInRange.forEach((s) => s.items.forEach((it) => rows.push([s.date, it.name, it.qty, it.price * it.qty, s.payment, s.customer])));
-    const csv = rows.map((r) => r.join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
+    const saleMap = Object.fromEntries(sales.map((s) => [s.id, s]));
+    const rows = [[
+      "Tanggal",
+      "Invoice",
+      "Item",
+      "SKU",
+      "Qty",
+      "Harga Jual",
+      "Subtotal",
+      "Profit Item",
+      "Pembayaran",
+      "Pelanggan",
+      "Kasir",
+    ]];
+
+    items.forEach((it) => {
+      const sale = saleMap[it.sale_id] || {};
+      rows.push([
+        sale.created_at || it.created_at,
+        sale.invoice_number || "",
+        it.product_name || "",
+        it.sku || "",
+        Number(it.quantity || 0),
+        Number(it.selling_price || 0),
+        Number(it.subtotal || 0),
+        Number(it.profit || 0),
+        sale.payment_method || "",
+        sale.customer_name || "Umum",
+        sale.cashier_name || "",
+      ]);
+    });
+
+    const csv = "\uFEFF" + rows.map((r) => r.map(csvCell).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(blob);
+    a.href = url;
     a.download = `laporan-penjualan-${todayStr()}.csv`;
     a.click();
+    URL.revokeObjectURL(url);
   };
+
+  if (loadingReport) {
+    return <div style={{ padding: 30, textAlign: "center" }}>Memuat laporan...</div>;
+  }
 
   return (
     <div>
-      <PageTitle title="Laporan & Analitik" subtitle="Pantau performa penjualan konter"
+      <PageTitle title="Laporan & Analitik" subtitle="Data penjualan langsung dari Supabase"
         right={<div style={{ display: "flex", gap: 8, width: isMobile ? "100%" : "auto" }}>
           <Select value={range} onChange={(e) => setRange(e.target.value)} style={{ width: isMobile ? "100%" : 150 }}>
             <option value="7">7 Hari Terakhir</option>
             <option value="30">30 Hari Terakhir</option>
             <option value="90">90 Hari Terakhir</option>
           </Select>
-          <Btn variant="outline" onClick={exportCsv} style={isMobile ? { flexShrink: 0 } : {}}><Download size={14} /> {isMobile ? "" : "Export CSV"}</Btn>
+          <Btn variant="outline" onClick={exportCsv} disabled={sales.length === 0} style={isMobile ? { flexShrink: 0 } : {}}>
+            <Download size={14} /> {isMobile ? "" : "Export CSV"}
+          </Btn>
         </div>} />
 
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3,1fr)", gap: 14, marginBottom: 16 }}>
         <Card><div style={{ fontSize: 12, color: "#64748B" }}>Total Omzet</div><div style={{ fontSize: 19, fontWeight: 700 }}>{rupiah(omzet)}</div></Card>
-        <Card><div style={{ fontSize: 12, color: "#64748B" }}>Estimasi Profit</div><div style={{ fontSize: 19, fontWeight: 700, color: "#1FAE7A" }}>{rupiah(profit)}</div></Card>
-        <Card><div style={{ fontSize: 12, color: "#64748B" }}>Jumlah Transaksi</div><div style={{ fontSize: 19, fontWeight: 700 }}>{salesInRange.length}</div></Card>
+        <Card><div style={{ fontSize: 12, color: "#64748B" }}>Profit Penjualan</div><div style={{ fontSize: 19, fontWeight: 700, color: "#1FAE7A" }}>{rupiah(profit)}</div></Card>
+        <Card><div style={{ fontSize: 12, color: "#64748B" }}>Jumlah Transaksi</div><div style={{ fontSize: 19, fontWeight: 700 }}>{sales.length}</div></Card>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.5fr 1fr", gap: 14 }}>
@@ -1368,35 +1617,41 @@ function Laporan({ data, isMobile }) {
               <BarChart data={byDay}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
                 <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => (v >= 1000 ? v / 1000 + "k" : v)} />
+                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => (v >= 1000000 ? `${(v / 1000000).toFixed(v % 1000000 ? 1 : 0)}jt` : v >= 1000 ? `${Math.round(v / 1000)}k` : v)} />
                 <Tooltip formatter={(v) => rupiah(v)} />
                 <Bar dataKey="total" fill="#2563EB" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </Card>
+
         <Card>
           <div style={{ fontWeight: 700, fontSize: 14.5, marginBottom: 12 }}>Produk Paling Laku</div>
           {topProducts.length === 0 ? <Empty text="Belum ada data penjualan." /> : (
-            <div style={{ width: "100%", height: 220, marginBottom: 8 }}>
-              <ResponsiveContainer>
-                <PieChart>
-                  <Pie data={topProducts} dataKey="qty" nameKey="name" innerRadius={45} outerRadius={75}>
-                    {topProducts.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {topProducts.map((p, i) => (
-              <div key={p.name} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5 }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: 99, background: COLORS[i % COLORS.length] }} />{p.name}</span>
-                <b>{p.qty} terjual</b>
+            <>
+              <div style={{ width: "100%", height: 220, marginBottom: 8 }}>
+                <ResponsiveContainer>
+                  <PieChart>
+                    <Pie data={topProducts} dataKey="qty" nameKey="name" innerRadius={45} outerRadius={75}>
+                      {topProducts.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
               </div>
-            ))}
-          </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {topProducts.map((p, i) => (
+                  <div key={p.name} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, gap: 10 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 99, background: COLORS[i % COLORS.length], flexShrink: 0 }} />
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                    </span>
+                    <b style={{ whiteSpace: "nowrap" }}>{p.qty} terjual</b>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </Card>
       </div>
     </div>
