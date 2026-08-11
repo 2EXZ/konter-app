@@ -223,7 +223,7 @@ export default function App() {
       <div style={{ padding: 14, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
         <div style={{ fontSize: 12.5, color: "#fff", fontWeight: 600 }}>{currentUser.name}</div>
         <div style={{ fontSize: 11, color: "#7D8CA3", marginBottom: 10, textTransform: "capitalize" }}>{currentUser.role}</div>
-        <button onClick={() => supabase.auth.signOut()} style={{
+        <button onClick={() => supabase.auth.signOut({ scope: "local" })} style={{
           display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#F0A0A0", background: "transparent",
           border: "1px solid rgba(255,255,255,0.12)", borderRadius: 7, padding: "7px 10px", width: "100%", cursor: "pointer"
         }}>
