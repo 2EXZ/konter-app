@@ -129,6 +129,38 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Keep the signed-in user's name/role synchronized when an owner updates
+  // the profile from another device. This also makes role changes take effect
+  // without requiring logout/login.
+  useEffect(() => {
+    if (!currentUser?.id) return;
+
+    const channel = supabase
+      .channel(`profile-self-${currentUser.id}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "profiles", filter: `id=eq.${currentUser.id}` },
+        (payload) => {
+          setCurrentUser((prev) => prev ? {
+            ...prev,
+            name: payload.new.full_name ?? prev.name,
+            role: payload.new.role ?? prev.role,
+            email: payload.new.email ?? prev.email,
+          } : prev);
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [currentUser?.id]);
+
+  // Never leave an account on an owner-only page after its role changes.
+  useEffect(() => {
+    if (!currentUser) return;
+    const allowed = NAV.some((item) => item.key === page && item.roles.includes(currentUser.role));
+    if (!allowed) setPage("dashboard");
+  }, [currentUser?.role, page]);
+
   const persist = async (next) => {
     setData(next);
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); }
@@ -1165,10 +1197,37 @@ function Ppob({ showToast, currentUser, isMobile }) {
   return (
     <div>
       <PageTitle title="PPOB" subtitle="Top up pulsa, token listrik, BPJS, PDAM, dan tagihan lainnya" />
-      <div style={{ background: "#FFF7ED", border: "1px solid #FED7AA", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, color: "#9A5B0D", marginBottom: 16, display: "flex", gap: 8, alignItems: "flex-start" }}>
-        <AlertTriangle size={15} style={{ marginTop: 1, flexShrink: 0 }} />
-        Modul PPOB sekarang <b>tersimpan dan sinkron lewat Supabase</b>, tetapi transaksi ke provider masih mode <b>simulasi</b>. Integrasi provider nyata (mis. Digiflazz/H2H) akan membutuhkan credential server-side dan tidak boleh ditaruh di frontend.
-      </div>
+    <div
+  style={{
+    background: "#FFF7ED",
+    border: "1px solid #FED7AA",
+    borderRadius: 10,
+    padding: "11px 14px",
+    fontSize: 12.5,
+    color: "#9A5B0D",
+    marginBottom: 16,
+    display: "flex",
+    gap: 10,
+    alignItems: "flex-start",
+    lineHeight: 1.6,
+  }}
+>
+  <AlertTriangle
+    size={16}
+    style={{
+      marginTop: 2,
+      flexShrink: 0,
+    }}
+  />
+
+  <div style={{ flex: 1, minWidth: 0 }}>
+    Modul PPOB sekarang{" "}
+    <b>tersimpan dan sinkron lewat Supabase</b>, tetapi transaksi ke
+    provider masih dalam mode <b>simulasi</b>. Integrasi provider nyata
+    seperti Digiflazz/H2H membutuhkan credential server-side dan tidak
+    boleh ditaruh di frontend.
+  </div>
+</div>
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1.2fr", gap: 16 }}>
         <Card>
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8, marginBottom: 16 }}>
@@ -1663,49 +1722,107 @@ function Pengguna({ currentUser, showToast }) {
   const [users, setUsers] = useState(null);
   const [loadErr, setLoadErr] = useState("");
   const [modal, setModal] = useState(null);
+  const [createModal, setCreateModal] = useState(false);
 
   const loadUsers = async () => {
     setLoadErr("");
     const { data: rows, error } = await supabase
       .from("profiles")
-      .select("id, full_name, role, created_at")
+      .select("id, full_name, email, role, created_at, updated_at")
       .order("created_at", { ascending: true });
     if (error) setLoadErr(error.message);
-    else setUsers(rows);
+    else setUsers(rows || []);
   };
 
-  useEffect(() => { loadUsers(); }, []);
+  useEffect(() => {
+    loadUsers();
+    const channel = supabase
+      .channel("profiles-admin-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, loadUsers)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
+  const createEmployee = async (f) => {
+    const { data, error } = await supabase.functions.invoke("admin-users", {
+      body: {
+        action: "create",
+        email: f.email.trim().toLowerCase(),
+        password: f.password,
+        full_name: f.full_name.trim(),
+      },
+    });
+
+    if (error) {
+      showToast("Gagal membuat akun: " + error.message, "warn");
+      return false;
+    }
+    if (!data?.ok) {
+      showToast("Gagal membuat akun: " + (data?.error || "Respons server tidak valid"), "warn");
+      return false;
+    }
+
+    setCreateModal(false);
+    showToast("Akun karyawan berhasil dibuat.");
+    await loadUsers();
+    return true;
+  };
 
   const save = async (u) => {
+    const payload = { full_name: u.full_name.trim() };
+    if (u.id !== currentUser.id) payload.role = u.role;
+
     const { error } = await supabase
       .from("profiles")
-      .update({ full_name: u.full_name, role: u.role })
+      .update(payload)
       .eq("id", u.id);
     if (error) { showToast("Gagal menyimpan: " + error.message, "warn"); return; }
     setModal(null);
     showToast("Pengguna tersimpan.");
-    loadUsers();
+    await loadUsers();
   };
 
   return (
     <div>
-      <PageTitle title="Pengguna & Hak Akses" subtitle="Kelola akun owner dan cashier"
-        right={<Btn variant="outline" disabled title="Tambah akun lewat Supabase Dashboard (lihat catatan di bawah)"><Plus size={15} /> Tambah Pengguna</Btn>} />
+      <PageTitle
+        title="Pengguna & Hak Akses"
+        subtitle="Kelola akun owner dan karyawan"
+        right={<Btn onClick={() => setCreateModal(true)}><Plus size={15} /> Tambah Karyawan</Btn>}
+      />
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 12, marginBottom: 14 }}>
+        <Card>
+          <div style={{ fontSize: 12, color: "#64748B" }}>Total Pengguna</div>
+          <div style={{ fontSize: 20, fontWeight: 700 }}>{users?.length ?? "-"}</div>
+        </Card>
+        <Card>
+          <div style={{ fontSize: 12, color: "#64748B" }}>Owner</div>
+          <div style={{ fontSize: 20, fontWeight: 700 }}>{users ? users.filter((u) => u.role === "owner").length : "-"}</div>
+        </Card>
+        <Card>
+          <div style={{ fontSize: 12, color: "#64748B" }}>Karyawan / Kasir</div>
+          <div style={{ fontSize: 20, fontWeight: 700 }}>{users ? users.filter((u) => u.role === "cashier").length : "-"}</div>
+        </Card>
+      </div>
+
       <Card>
         {loadErr && <div style={{ fontSize: 12.5, color: "#B91C1C", marginBottom: 10 }}>Gagal memuat pengguna: {loadErr}</div>}
         <div style={{ overflowX: "auto" }}>
           <table>
             <thead><tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
-              <th style={th}>Nama</th><th style={th}>Peran</th><th style={th}>Bergabung</th><th style={th}></th>
+              <th style={th}>Nama</th><th style={th}>Email</th><th style={th}>Peran</th><th style={th}>Bergabung</th><th style={th}></th>
             </tr></thead>
             <tbody>
               {(users || []).map((u) => (
                 <tr key={u.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 13 }}>
-                  <td style={{ ...td, whiteSpace: "nowrap" }}>{u.full_name}{u.id === currentUser.id && <span style={{ color: "#94A3B8", fontSize: 11 }}> (Anda)</span>}</td>
-                  <td style={td}><Badge tone={u.role === "owner" ? "blue" : "slate"}>{u.role === "owner" ? "Owner" : "Cashier"}</Badge></td>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>
+                    <div style={{ fontWeight: 600 }}>{u.full_name}{u.id === currentUser.id && <span style={{ color: "#94A3B8", fontSize: 11 }}> (Anda)</span>}</div>
+                  </td>
+                  <td style={{ ...td, whiteSpace: "nowrap", color: "#64748B" }}>{u.email || "-"}</td>
+                  <td style={td}><Badge tone={u.role === "owner" ? "blue" : "slate"}>{u.role === "owner" ? "Owner" : "Karyawan"}</Badge></td>
                   <td style={{ ...td, whiteSpace: "nowrap" }}>{u.created_at ? new Date(u.created_at).toLocaleDateString("id-ID", { dateStyle: "medium" }) : "-"}</td>
                   <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
-                    <button onClick={() => setModal(u)} style={iconBtn}><Pencil size={14} /></button>
+                    <button onClick={() => setModal(u)} title="Edit pengguna" style={iconBtn}><Pencil size={14} /></button>
                   </td>
                 </tr>
               ))}
@@ -1715,27 +1832,60 @@ function Pengguna({ currentUser, showToast }) {
         {users === null && !loadErr && <Empty text="Memuat…" />}
         {users && users.length === 0 && <Empty text="Belum ada pengguna." />}
       </Card>
-      <div style={{ marginTop: 14, fontSize: 12, color: "#94A3B8", lineHeight: 1.6 }}>
-        <b>Owner</b> memiliki akses penuh (kasir, stok, PPOB, keuangan, laporan, pengguna). <b>Cashier</b> hanya memiliki akses ke kasir, produk & stok, dan PPOB.<br />
-        Menambah atau menghapus akun perlu Admin API Supabase yang <b>tidak aman dijalankan dari browser</b>, jadi untuk saat ini dilakukan lewat <b>Supabase Dashboard → Authentication → Users → Add user</b>. Akun pertama yang dibuat otomatis jadi <b>owner</b>; akun berikutnya otomatis jadi <b>cashier</b> dan bisa dipromosikan lewat tombol edit di atas.
+
+      <div style={{ marginTop: 14, fontSize: 12.5, color: "#64748B", lineHeight: 1.65 }}>
+        <b>Owner</b> memiliki akses penuh. <b>Karyawan</b> dapat membuka Dashboard, Kasir, Produk & Stok dalam mode lihat, serta PPOB.
+        Keuangan, Laporan, Pengguna, perubahan produk, dan perubahan stok tetap dilindungi oleh hak akses database (RLS), bukan sekadar disembunyikan dari menu.
       </div>
-      {modal && <UserModal user={modal} onSave={save} onClose={() => setModal(null)} />}
+
+      {createModal && <CreateEmployeeModal onSave={createEmployee} onClose={() => setCreateModal(false)} />}
+      {modal && <UserModal user={modal} isSelf={modal.id === currentUser.id} onSave={save} onClose={() => setModal(null)} />}
     </div>
   );
 }
-function UserModal({ user, onSave, onClose }) {
+
+function CreateEmployeeModal({ onSave, onClose }) {
+  const [f, setF] = useState({ full_name: "", email: "", password: "" });
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    if (!f.full_name.trim()) return;
+    if (!/^\S+@\S+\.\S+$/.test(f.email.trim())) return;
+    if (f.password.length < 8) return;
+    setSaving(true);
+    const ok = await onSave(f);
+    if (!ok) setSaving(false);
+  };
+  return (
+    <Modal title="Tambah Karyawan" onClose={onClose} width={400}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <Field label="Nama Lengkap"><Input autoFocus value={f.full_name} onChange={(e) => setF({ ...f, full_name: e.target.value })} placeholder="Nama karyawan" /></Field>
+        <Field label="Email Login"><Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} placeholder="karyawan@email.com" /></Field>
+        <Field label="Password Awal"><Input type="password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} placeholder="Minimal 8 karakter" /></Field>
+        <div style={{ background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 8, padding: 10, fontSize: 12, color: "#64748B", lineHeight: 1.5 }}>
+          Akun baru otomatis dibuat sebagai <b>Karyawan</b>. Password awal dapat diberikan langsung kepada karyawan dan sebaiknya diganti setelah login pertama.
+        </div>
+        <Btn onClick={submit} disabled={saving || !f.full_name.trim() || !/^\S+@\S+\.\S+$/.test(f.email.trim()) || f.password.length < 8} style={{ justifyContent: "center" }}>
+          {saving ? "Membuat akun…" : "Buat Akun Karyawan"}
+        </Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function UserModal({ user, isSelf, onSave, onClose }) {
   const [f, setF] = useState({ id: user.id, full_name: user.full_name, role: user.role });
   return (
     <Modal title="Edit Pengguna" onClose={onClose} width={380}>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <Field label="Nama Lengkap"><Input value={f.full_name} onChange={(e) => setF({ ...f, full_name: e.target.value })} /></Field>
         <Field label="Peran">
-          <Select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>
-            <option value="cashier">Cashier</option>
+          <Select disabled={isSelf} value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>
+            <option value="cashier">Karyawan</option>
             <option value="owner">Owner</option>
           </Select>
         </Field>
-        <Btn onClick={() => f.full_name && onSave(f)} style={{ justifyContent: "center" }}>Simpan</Btn>
+        {isSelf && <div style={{ fontSize: 12, color: "#64748B" }}>Peran akun Anda sendiri tidak dapat diubah dari form ini untuk mencegah kehilangan akses owner.</div>}
+        <Btn onClick={() => f.full_name.trim() && onSave(f)} style={{ justifyContent: "center" }}>Simpan</Btn>
       </div>
     </Modal>
   );
