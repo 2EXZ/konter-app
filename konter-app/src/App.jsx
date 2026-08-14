@@ -144,15 +144,30 @@ export default function App() {
     const loadProfile = async (userId, email) => {
       const { data: profile, error } = await supabase
         .from("profiles")
-        .select("*")
+        .select("id, full_name, email, role, is_active")
         .eq("id", userId)
         .single();
-      if (!error && profile) {
-        setCurrentUser({ id: profile.id, email, name: profile.full_name, role: profile.role });
-      } else {
-        // Profil belum ada (trigger belum sempat jalan / race condition) — jangan macet di loading.
-        setCurrentUser({ id: userId, email, name: email, role: "cashier" });
+
+      if (error || !profile) {
+        console.error("Profil pengguna tidak tersedia:", error);
+        setCurrentUser(null);
+        await supabase.auth.signOut({ scope: "local" });
+        return;
       }
+
+      if (profile.is_active === false) {
+        setCurrentUser(null);
+        await supabase.auth.signOut({ scope: "local" });
+        return;
+      }
+
+      setCurrentUser({
+        id: profile.id,
+        email: profile.email || email,
+        name: profile.full_name,
+        role: profile.role,
+        isActive: true,
+      });
     };
 
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -179,12 +194,19 @@ export default function App() {
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "profiles", filter: `id=eq.${currentUser.id}` },
-        (payload) => {
+        async (payload) => {
+          if (payload.new.is_active === false) {
+            setCurrentUser(null);
+            await supabase.auth.signOut({ scope: "local" });
+            return;
+          }
+
           setCurrentUser((prev) => prev ? {
             ...prev,
             name: payload.new.full_name ?? prev.name,
             role: payload.new.role ?? prev.role,
             email: payload.new.email ?? prev.email,
+            isActive: payload.new.is_active ?? prev.isActive,
           } : prev);
         }
       )
@@ -334,7 +356,7 @@ export default function App() {
           {page === "produk" && <Produk role={currentUser.role} showToast={showToast} isMobile={isMobile} />}
           {page === "ppob" && <Ppob showToast={showToast} currentUser={currentUser} isMobile={isMobile} />}
           {page === "keuangan" && <Keuangan showToast={showToast} isMobile={isMobile} currentUser={currentUser} />}
-          {page === "laporan" && <Laporan isMobile={isMobile} showToast={showToast} />}
+          {page === "laporan" && <Laporan isMobile={isMobile} showToast={showToast} currentUser={currentUser} />}
           {page === "pengguna" && <Pengguna currentUser={currentUser} showToast={showToast} isMobile={isMobile} />}
         </main>
       </section>
@@ -1023,6 +1045,599 @@ const globalCss = `
     .ppob-amount-cell > b { font-size:11px; }
     .finance-side-grid { grid-template-columns:1fr; }
   }
+
+  /* ---------- Operational safety / correction UI ---------- */
+  .operation-warning {
+    display:flex;
+    align-items:flex-start;
+    gap:9px;
+    padding:11px 12px;
+    border:1px solid #F5D6A3;
+    border-radius:11px;
+    background:#FFF8EC;
+    color:#8A5A13;
+    font-size:11.5px;
+    line-height:1.55;
+  }
+  .operation-warning svg { flex-shrink:0; margin-top:1px; }
+  .payment-summary-box {
+    display:grid;
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    gap:8px;
+  }
+  .payment-summary-box > div {
+    min-width:0;
+    padding:10px;
+    border:1px solid #E7EBF1;
+    border-radius:11px;
+    background:#F8FAFC;
+  }
+  .payment-summary-box span { display:block; color:#8A97A9; font-size:9.8px; margin-bottom:4px; }
+  .payment-summary-box b { display:block; color:#182235; font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .page-actions { display:flex; gap:7px; align-items:center; flex-wrap:wrap; }
+  .segmented-tabs {
+    display:inline-flex;
+    padding:3px;
+    border-radius:11px;
+    background:#E9EDF3;
+    margin-bottom:10px;
+  }
+  .segmented-tabs button {
+    border:none;
+    min-height:32px;
+    padding:7px 12px;
+    border-radius:8px;
+    background:transparent;
+    color:#788598;
+    font-size:10.8px;
+    font-weight:750;
+    cursor:pointer;
+  }
+  .segmented-tabs button.active {
+    background:#fff;
+    color:#111827;
+    box-shadow:0 2px 8px rgba(15,23,42,.06);
+  }
+  .section-note {
+    padding:11px 13px;
+    margin-bottom:10px;
+    border:1px solid #E8ECF2;
+    border-radius:11px;
+    background:#F8FAFC;
+    color:#758398;
+    font-size:10.8px;
+    line-height:1.6;
+  }
+  .row-actions { display:flex; align-items:center; justify-content:flex-end; gap:5px; }
+  .system-entry-label { color:#98A3B3; font-size:10px; font-weight:700; white-space:nowrap; }
+  .is-voided { opacity:.68; }
+  tr.is-voided td { background:#FAFBFC; color:#8C97A6; }
+  .void-reason {
+    margin-top:9px;
+    padding-top:8px;
+    border-top:1px dashed #E4E8EE;
+    color:#8A97A9;
+    font-size:10.2px;
+    line-height:1.5;
+  }
+  .finance-mobile-card,.debt-mobile-card,.sale-audit-mobile-card {
+    border:1px solid #E5EAF1;
+    border-radius:15px;
+    background:#fff;
+    padding:14px;
+    box-shadow:0 4px 16px rgba(15,23,42,.035);
+  }
+  .finance-mobile-top {
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:12px;
+  }
+  .money-value,.sale-total {
+    flex-shrink:0;
+    font-size:13px;
+    font-weight:850;
+    font-variant-numeric:tabular-nums;
+    white-space:nowrap;
+  }
+  .money-value.income { color:#0F8B6D; }
+  .money-value.expense { color:#BE123C; }
+  .mobile-note {
+    margin-top:9px;
+    color:#66758A;
+    font-size:11px;
+    line-height:1.5;
+    word-break:break-word;
+  }
+  .mobile-card-footer {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    margin-top:11px;
+  }
+  .debt-number-grid {
+    display:grid;
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    gap:7px;
+    margin-top:11px;
+  }
+  .debt-number-grid > div {
+    min-width:0;
+    padding:9px;
+    border-radius:10px;
+    background:#F7F9FC;
+  }
+  .debt-number-grid span { display:block; color:#91A0B4; font-size:9.5px; margin-bottom:4px; }
+  .debt-number-grid b { display:block; color:#253248; font-size:10.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .transaction-type-toggle {
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:7px;
+  }
+  .transaction-type-toggle button {
+    min-height:40px;
+    border:1px solid #DFE5ED;
+    border-radius:10px;
+    background:#fff;
+    color:#5E6B7E;
+    font-size:12px;
+    font-weight:750;
+    cursor:pointer;
+  }
+  .transaction-type-toggle button.active {
+    border-color:#4F7CFF;
+    background:#EEF3FF;
+    color:#315AD0;
+    box-shadow:0 0 0 2px rgba(79,124,255,.10);
+  }
+  .nominal-presets {
+    display:flex;
+    gap:6px;
+    flex-wrap:wrap;
+    margin-top:8px;
+  }
+  .nominal-chip {
+    min-height:32px;
+    padding:0 10px;
+    border-radius:9px;
+    border:1px solid #E3E8EF;
+    background:#fff;
+    color:#66758A;
+    font-size:10.5px;
+    font-weight:750;
+    cursor:pointer;
+  }
+  .nominal-chip.active {
+    border-color:#111827;
+    background:#111827;
+    color:#fff;
+  }
+  .text-danger-action {
+    border:none;
+    background:transparent;
+    padding:2px 0;
+    color:#BE123C;
+    font-size:9.8px;
+    font-weight:800;
+    cursor:pointer;
+  }
+  .finance-balance-breakdown {
+    display:flex;
+    gap:12px;
+    flex-wrap:wrap;
+    font-size:10.5px;
+    color:#8195B4;
+  }
+  .report-grid-v2 {
+    display:grid;
+    grid-template-columns:minmax(0,1.45fr) minmax(300px,.55fr);
+    gap:14px;
+  }
+  .report-chart-wrap { width:100%; height:280px; }
+  .top-product-chart { width:100%; height:190px; }
+  .top-product-row {
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:8px 0;
+    border-bottom:1px solid #F0F2F5;
+  }
+  .top-product-row > span:nth-child(2) {
+    min-width:0;
+    flex:1;
+    color:#526074;
+    font-size:11px;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .top-product-row b { font-size:11px; }
+
+  @media (max-width: 860px) {
+    /* More comfortable mobile rhythm and typography */
+    .workspace-content {
+      padding:18px 14px calc(132px + env(safe-area-inset-bottom)) !important;
+      scroll-padding-bottom:calc(132px + env(safe-area-inset-bottom)) !important;
+    }
+    .page-title-row {
+      margin-bottom:17px !important;
+      gap:11px !important;
+      align-items:flex-start !important;
+    }
+    .page-title-row > div:first-child { width:100%; }
+    .page-title-row h1 {
+      font-size:24px !important;
+      line-height:1.15 !important;
+      letter-spacing:-.035em !important;
+    }
+    .page-title-row > div:first-child > div {
+      margin-top:6px !important;
+      font-size:13.5px !important;
+      line-height:1.55 !important;
+    }
+    .page-actions,.report-actions {
+      width:100%;
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:8px;
+    }
+    .page-actions > *, .report-actions > * {
+      width:100% !important;
+      min-width:0;
+    }
+    .ui-card {
+      border-radius:16px !important;
+    }
+    .panel-heading {
+      align-items:flex-start !important;
+      margin-bottom:15px !important;
+      text-align:left !important;
+    }
+    .panel-heading > div { text-align:left !important; }
+    .panel-heading b {
+      font-size:14.5px !important;
+      line-height:1.35 !important;
+    }
+    .panel-heading span {
+      font-size:12px !important;
+      line-height:1.5 !important;
+    }
+    label {
+      font-size:12.5px !important;
+      line-height:1.35 !important;
+      margin-bottom:7px !important;
+    }
+    .ui-field {
+      min-height:48px !important;
+      font-size:16px !important; /* prevents iOS auto zoom */
+      line-height:1.25 !important;
+      border-radius:12px !important;
+    }
+    .ui-btn-primary,.ui-btn-outline,.ui-btn-danger,.ui-btn-ghost {
+      min-height:44px !important;
+      font-size:13.5px !important;
+      line-height:1.2 !important;
+      border-radius:11px !important;
+    }
+    .mobile-bottom-nav {
+      height:68px !important;
+      bottom:calc(8px + env(safe-area-inset-bottom)) !important;
+    }
+    .mobile-bottom-nav button {
+      min-width:54px !important;
+      height:56px !important;
+      font-size:9.8px !important;
+      line-height:1.05 !important;
+      gap:4px !important;
+    }
+    .mobile-bottom-nav button svg {
+      width:21px !important;
+      height:21px !important;
+    }
+    .mobile-card-list { gap:11px !important; }
+    .inventory-mobile-card,.stock-history-mobile-card,.user-mobile-card,
+    .finance-mobile-card,.debt-mobile-card,.sale-audit-mobile-card {
+      padding:15px !important;
+      border-radius:16px !important;
+    }
+    .mobile-card-title b {
+      font-size:14px !important;
+      line-height:1.35 !important;
+    }
+    .mobile-card-title span {
+      margin-top:4px !important;
+      font-size:11.5px !important;
+      line-height:1.4 !important;
+    }
+    .mobile-card-meta > div span {
+      font-size:10.5px !important;
+    }
+    .mobile-card-meta > div b {
+      font-size:12.5px !important;
+      line-height:1.4 !important;
+    }
+    .category-chips {
+      display:flex !important;
+      flex-wrap:nowrap !important;
+      overflow-x:auto !important;
+      gap:7px !important;
+      padding-bottom:6px !important;
+      scrollbar-width:none;
+    }
+    .category-chips::-webkit-scrollbar { display:none; }
+    .category-chip {
+      flex:0 0 auto !important;
+      white-space:nowrap !important;
+    }
+    .product-card-v2 b {
+      font-size:13.5px !important;
+      line-height:1.35 !important;
+    }
+    .product-price {
+      font-size:15px !important;
+    }
+    .product-stock {
+      font-size:10.5px !important;
+    }
+    .service-card-v2 {
+      min-height:108px !important;
+      padding:13px !important;
+    }
+    .service-card-v2 b {
+      font-size:13px !important;
+      line-height:1.35 !important;
+    }
+    .nominal-presets {
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:7px;
+    }
+    .nominal-chip {
+      width:100%;
+      min-height:39px;
+      font-size:11.5px;
+    }
+    .dark-total-card {
+      padding:16px !important;
+      border-radius:14px !important;
+    }
+    .ppob-service-cell b,.ppob-meta-cell b {
+      font-size:12.5px !important;
+    }
+    .ppob-service-cell span,.ppob-meta-cell span {
+      font-size:10.8px !important;
+    }
+    .ppob-amount-cell > b {
+      font-size:12.5px !important;
+    }
+    .finance-balance-card {
+      min-height:auto !important;
+      padding:20px !important;
+    }
+    .finance-balance-card .value {
+      font-size:30px !important;
+    }
+    .finance-balance-breakdown {
+      margin-top:16px;
+      gap:5px 10px;
+      font-size:11.5px;
+      line-height:1.5;
+    }
+    .finance-side-grid {
+      grid-template-columns:1fr 1fr !important;
+      gap:9px !important;
+    }
+    .finance-mini-card {
+      min-height:92px !important;
+      padding:14px !important;
+    }
+    .finance-mini-card span { font-size:11.5px !important; }
+    .finance-mini-card b { font-size:16px !important; margin-top:6px !important; }
+    .segmented-tabs {
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      width:100%;
+      margin-bottom:12px;
+    }
+    .segmented-tabs button {
+      min-height:42px;
+      font-size:12.5px;
+    }
+    .section-note {
+      font-size:11.5px;
+      line-height:1.6;
+      margin-bottom:12px;
+    }
+    .money-value,.sale-total {
+      font-size:14px !important;
+    }
+    .mobile-note {
+      font-size:12px !important;
+    }
+    .mobile-card-footer {
+      align-items:flex-end;
+      gap:8px;
+    }
+    .debt-number-grid span { font-size:10.5px; }
+    .debt-number-grid b { font-size:11.5px; }
+    .payment-summary-box {
+      grid-template-columns:1fr;
+    }
+    .payment-summary-box span { font-size:11px; }
+    .payment-summary-box b { font-size:13px; }
+    .report-hero-v2 {
+      grid-template-columns:1fr !important;
+      gap:1px !important;
+      padding:0 !important;
+      overflow:hidden;
+    }
+    .report-stat {
+      padding:15px 16px !important;
+      border-right:none !important;
+      border-bottom:1px solid rgba(255,255,255,.08);
+    }
+    .report-stat:last-child { border-bottom:none; }
+    .report-stat span { font-size:10.5px !important; }
+    .report-stat b { font-size:21px !important; }
+    .report-grid-v2 {
+      grid-template-columns:1fr;
+      gap:12px;
+    }
+    .report-chart-wrap { height:245px; }
+    .top-product-chart { height:170px; }
+    .top-product-row > span:nth-child(2) { font-size:12px; }
+    .top-product-row b { font-size:12px; }
+    .operation-warning {
+      font-size:12px;
+    }
+  }
+
+  @media (max-width: 390px) {
+    .workspace-content {
+      padding-left:11px !important;
+      padding-right:11px !important;
+    }
+    .page-title-row h1 { font-size:22px !important; }
+    .page-title-row > div:first-child > div { font-size:12.8px !important; }
+    .product-grid-v2 { grid-template-columns:1fr 1fr !important; gap:7px !important; }
+    .finance-side-grid { grid-template-columns:1fr !important; }
+    .debt-number-grid { grid-template-columns:1fr 1fr; }
+    .debt-number-grid > div:last-child { grid-column:1 / -1; }
+    .mobile-card-footer { flex-direction:column; align-items:stretch; }
+    .mobile-card-footer > * { width:100%; }
+    .row-actions { justify-content:flex-start; }
+  }
+
+
+  /* ---------- User lifecycle ---------- */
+  .user-summary-grid {
+    display:grid;
+    grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:10px;
+    margin-bottom:14px;
+  }
+  .summary-label {
+    color:#7C899B;
+    font-size:10.5px;
+    font-weight:700;
+  }
+  .summary-value {
+    margin-top:6px;
+    color:#111827;
+    font-size:21px;
+    font-weight:850;
+    letter-spacing:-.03em;
+  }
+  .is-user-inactive {
+    opacity:.76;
+    background:#FAFBFC;
+  }
+  tr.is-user-inactive td {
+    background:#FAFBFC;
+  }
+  .user-role-row {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+    margin-top:11px;
+  }
+  .user-role-row > span {
+    color:#98A3B3;
+    font-size:10px;
+  }
+  .user-deactivation-reason {
+    margin-top:10px;
+    padding:9px 10px;
+    border-radius:10px;
+    border:1px dashed #DDE3EA;
+    background:#F8FAFC;
+    color:#758398;
+    font-size:10.5px;
+    line-height:1.5;
+    word-break:break-word;
+  }
+  .user-action-stack {
+    width:100%;
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:7px;
+  }
+  .user-action-stack > button:last-child:nth-child(3) {
+    grid-column:1 / -1;
+  }
+  .inline-error {
+    padding:10px 11px;
+    border:1px solid #FECACA;
+    border-radius:10px;
+    background:#FFF1F2;
+    color:#B91C1C;
+    font-size:11.5px;
+    line-height:1.5;
+  }
+  .danger-zone-box {
+    display:flex;
+    align-items:flex-start;
+    gap:10px;
+    padding:12px;
+    border:1px solid #FECACA;
+    border-radius:12px;
+    background:#FFF1F2;
+    color:#9F1239;
+  }
+  .danger-zone-box svg {
+    flex-shrink:0;
+    margin-top:1px;
+  }
+  .danger-zone-box b {
+    display:block;
+    font-size:12px;
+  }
+  .danger-zone-box span {
+    display:block;
+    margin-top:4px;
+    color:#A64A64;
+    font-size:11px;
+    line-height:1.55;
+  }
+
+  @media (max-width: 860px) {
+    .user-summary-grid {
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:8px;
+    }
+    .user-summary-grid .ui-card {
+      padding:14px !important;
+    }
+    .summary-label {
+      font-size:11.5px;
+    }
+    .summary-value {
+      font-size:22px;
+    }
+    .user-role-row > span {
+      font-size:11px;
+    }
+    .user-deactivation-reason {
+      font-size:11.5px;
+      line-height:1.55;
+    }
+    .user-action-stack {
+      gap:8px;
+    }
+    .user-action-stack button {
+      width:100%;
+      justify-content:center;
+    }
+  }
+
+  @media (max-width: 390px) {
+    .user-summary-grid {
+      grid-template-columns:1fr 1fr;
+    }
+  }
+
 `
 
 // ---------- shared UI bits ----------
@@ -1094,10 +1709,13 @@ function LoginScreen({ storeName }) {
     });
     setSubmitting(false);
     if (error) {
+      const msg = String(error.message || "");
       setErr(
-        error.message === "Invalid login credentials"
+        msg === "Invalid login credentials"
           ? "Email atau password salah."
-          : error.message
+          : msg.toLowerCase().includes("banned")
+            ? "Akun ini sedang dinonaktifkan. Hubungi pemilik Dhell Cell."
+            : msg
       );
     }
   };
@@ -1267,13 +1885,15 @@ function Dashboard({ setPage, isMobile, showToast, currentUser }) {
     const [todayRes, recentRes, productsRes, debtsRes] = await Promise.all([
       supabase
         .from("sales")
-        .select("id, invoice_number, total_amount, total_profit, profit, payment_method, customer_name, cashier_name, created_at")
+        .select("id, invoice_number, total_amount, total_profit, profit, payment_method, customer_name, cashier_name, created_at, status")
+        .eq("status", "completed")
         .gte("created_at", start.toISOString())
         .lt("created_at", end.toISOString())
         .order("created_at", { ascending: false }),
       supabase
         .from("sales")
-        .select("id, invoice_number, total_amount, payment_method, customer_name, cashier_name, created_at")
+        .select("id, invoice_number, total_amount, payment_method, customer_name, cashier_name, created_at, status")
+        .eq("status", "completed")
         .order("created_at", { ascending: false })
         .limit(6),
       supabase
@@ -1283,7 +1903,7 @@ function Dashboard({ setPage, isMobile, showToast, currentUser }) {
       supabase
         .from("debts")
         .select("amount, paid, status")
-        .neq("status", "lunas"),
+        .eq("status", "belum lunas"),
     ]);
 
     if (todayRes.error) showToast("Gagal memuat dashboard penjualan: " + todayRes.error.message, "warn");
@@ -1615,6 +2235,12 @@ function Produk({ role, showToast, isMobile }) {
   };
 
   const deleteProduct = async (id) => {
+    const product = (products || []).find((p) => p.id === id);
+    const confirmed = window.confirm(
+      `Hapus ${product?.name || "produk ini"}? Produk hanya dapat dihapus jika belum memiliki riwayat stok/penjualan.`
+    );
+    if (!confirmed) return;
+
     const { error } = await supabase.from("products").delete().eq("id", id);
     if (error) {
       showToast(
@@ -1816,8 +2442,131 @@ function StockMoveModal({ product, mode, onSave, onClose }) {
           </Select>
         </Field>
         <Field label="Jumlah"><Input type="number" autoFocus value={qty} onChange={(e) => setQty(e.target.value)} /></Field>
-        <Field label="Catatan (opsional)"><Input value={note} onChange={(e) => setNote(e.target.value)} placeholder={mode === "in" ? "Restock dari supplier" : "Rusak / retur / lainnya"} /></Field>
-        <Btn onClick={submit} disabled={saving || Number(qty) <= 0} style={{ justifyContent: "center" }}>{saving ? "Menyimpan…" : "Simpan"}</Btn>
+        <Field label={movementType === "adjustment" || movementType === "other" ? "Alasan koreksi" : "Catatan (opsional)"}>
+          <Input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder={
+              movementType === "adjustment"
+                ? "Contoh: Koreksi salah input stok 12 Agu"
+                : mode === "in"
+                  ? "Restock dari supplier"
+                  : "Rusak / retur / lainnya"
+            }
+          />
+        </Field>
+        {(movementType === "adjustment" || movementType === "other") && (
+          <div style={{fontSize:10.5,color:"#8A97A9",lineHeight:1.5}}>
+            Koreksi stok wajib memiliki alasan agar riwayat tetap dapat diaudit.
+          </div>
+        )}
+        <Btn
+          onClick={submit}
+          disabled={saving || Number(qty) <= 0 || ((movementType === "adjustment" || movementType === "other") && note.trim().length < 3)}
+          style={{ justifyContent: "center" }}
+        >
+          {saving ? "Menyimpan…" : "Simpan"}
+        </Btn>
+      </div>
+    </Modal>
+  );
+}
+
+
+function ReasonModal({
+  title,
+  description,
+  confirmLabel = "Batalkan Transaksi",
+  onConfirm,
+  onClose,
+  danger = true,
+}) {
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (reason.trim().length < 3 || saving) return;
+    setSaving(true);
+    const ok = await onConfirm(reason.trim());
+    setSaving(false);
+    if (ok !== false) onClose();
+  };
+
+  return (
+    <Modal title={title} onClose={onClose} width={400}>
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        {description && (
+          <div className="operation-warning">
+            <AlertTriangle size={16}/>
+            <span>{description}</span>
+          </div>
+        )}
+        <Field label="Alasan">
+          <Input
+            autoFocus
+            value={reason}
+            onChange={(e)=>setReason(e.target.value)}
+            placeholder="Contoh: Salah input nominal"
+          />
+        </Field>
+        <div style={{fontSize:10.5,color:"#8A97A9",lineHeight:1.55}}>
+          Alasan disimpan sebagai audit trail dan dapat dilihat kembali pada riwayat.
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <Btn variant="outline" onClick={onClose} style={{flex:1}}>Kembali</Btn>
+          <Btn
+            variant={danger ? "danger" : "primary"}
+            disabled={reason.trim().length < 3 || saving}
+            onClick={submit}
+            style={{flex:1}}
+          >
+            {saving ? "Memproses…" : confirmLabel}
+          </Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function DebtPaymentModal({ debt, onPay, onClose }) {
+  const remaining = Math.max(Number(debt.amount || 0) - Number(debt.paid || 0), 0);
+  const [amount, setAmount] = useState(remaining ? String(remaining) : "");
+  const [saving, setSaving] = useState(false);
+  const numericAmount = Number(amount);
+  const valid = numericAmount > 0 && numericAmount <= remaining;
+
+  const submit = async () => {
+    if (!valid || saving) return;
+    setSaving(true);
+    const ok = await onPay(debt.id, numericAmount);
+    setSaving(false);
+    if (ok !== false) onClose();
+  };
+
+  return (
+    <Modal title={`Pembayaran Piutang — ${debt.customer}`} onClose={onClose} width={400}>
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <div className="payment-summary-box">
+          <div><span>Total Piutang</span><b>{rupiah(Number(debt.amount || 0))}</b></div>
+          <div><span>Sudah Dibayar</span><b>{rupiah(Number(debt.paid || 0))}</b></div>
+          <div><span>Sisa</span><b>{rupiah(remaining)}</b></div>
+        </div>
+        <Field label="Jumlah Pembayaran">
+          <Input
+            type="number"
+            min="1"
+            max={remaining}
+            value={amount}
+            onChange={(e)=>setAmount(e.target.value)}
+            placeholder="Rp0"
+          />
+        </Field>
+        {numericAmount > remaining && (
+          <div style={{fontSize:11,color:"#BE123C"}}>Pembayaran tidak boleh melebihi sisa piutang.</div>
+        )}
+        <Btn disabled={!valid || saving} onClick={submit}>
+          {saving ? "Menyimpan…" : "Catat Pembayaran"}
+        </Btn>
       </div>
     </Modal>
   );
@@ -1840,6 +2589,7 @@ function Ppob({ showToast, currentUser, isMobile }) {
   const [transactions, setTransactions] = useState([]);
   const [loadingPpob, setLoadingPpob] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [cancelTx, setCancelTx] = useState(null);
   const active = PPOB_TYPES.find((t) => t.key === type);
   const total = Number(nominal) > 0 ? Number(nominal) + (Number(fee) || 0) : 0;
 
@@ -1874,7 +2624,7 @@ function Ppob({ showToast, currentUser, isMobile }) {
       return;
     }
     if (amount <= 0 || adminFee < 0) {
-      showToast("Nominal harus lebih dari 0 dan fee tidak boleh negatif.", "warn");
+      showToast("Nominal harus lebih dari 0 dan biaya admin tidak boleh negatif.", "warn");
       return;
     }
     if (saving) return;
@@ -1899,26 +2649,121 @@ function Ppob({ showToast, currentUser, isMobile }) {
     await loadPpob();
   };
 
+  const voidSimulation = async (reason) => {
+    if (!cancelTx) return false;
+    const { error } = await supabase.rpc("void_ppob_simulation", {
+      p_ppob_id: cancelTx.id,
+      p_reason: reason,
+    });
+    if (error) {
+      showToast("Gagal membatalkan PPOB: " + error.message, "warn");
+      return false;
+    }
+    showToast("Transaksi PPOB simulasi dibatalkan.");
+    await loadPpob();
+    return true;
+  };
+
   const labelFor = (key) => PPOB_TYPES.find((x) => x.key === key)?.label || key;
-  const statusTone = (status) => status === "failed" ? "red" : status === "pending" ? "amber" : "green";
-  const statusLabel = (status) => status === "simulation_success" ? "Simulasi berhasil" : status === "failed" ? "Gagal" : status === "pending" ? "Diproses" : status;
+  const statusTone = (status) =>
+    status === "failed" ? "red" :
+    status === "pending" ? "amber" :
+    status === "voided" ? "slate" : "green";
+  const statusLabel = (status) =>
+    status === "simulation_success" ? "Simulasi berhasil" :
+    status === "failed" ? "Gagal" :
+    status === "pending" ? "Diproses" :
+    status === "voided" ? "Dibatalkan" :
+    status === "success" ? "Berhasil" : status;
 
   return (
     <div>
       <PageTitle title="PPOB" subtitle="Layanan digital dengan pencatatan transaksi realtime" />
-      <div className="service-grid-v2">{PPOB_TYPES.map((svc)=>{const Icon=svc.icon;return <button key={svc.key} className={type===svc.key?"service-card-v2 active":"service-card-v2"} onClick={()=>{setType(svc.key);setNominal("");}}><span className="service-icon"><Icon size={17}/></span><b>{svc.label}</b></button>})}</div>
+
+      <div className="service-grid-v2">
+        {PPOB_TYPES.map((svc)=>{
+          const Icon=svc.icon;
+          return (
+            <button
+              key={svc.key}
+              className={type===svc.key?"service-card-v2 active":"service-card-v2"}
+              onClick={()=>{setType(svc.key);setNominal("");}}
+            >
+              <span className="service-icon"><Icon size={17}/></span>
+              <b>{svc.label}</b>
+            </button>
+          );
+        })}
+      </div>
+
       <div className="ppob-layout">
         <Card>
-          <div className="panel-heading"><div><b>Transaksi baru</b><span style={{display:"block",marginTop:3}}>Provider belum terhubung • transaksi saat ini hanya simulasi</span></div><Badge tone="amber">SIMULASI</Badge></div>
-          <Field label={active.fieldLabel}><Input value={target} onChange={(e)=>setTarget(e.target.value)} placeholder={active.placeholder}/></Field>
-          <div style={{height:10}}/><Field label="Nominal"><Input type="number" min="1" value={nominal} onChange={(e)=>setNominal(e.target.value)} placeholder="Masukkan nominal"/></Field>
-          {active.presets.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>{active.presets.map((n)=><button key={n} onClick={()=>setNominal(n)} style={{height:30,padding:"0 9px",borderRadius:8,border:Number(nominal)===n?"1px solid #111827":"1px solid #E5E9F0",background:Number(nominal)===n?"#111827":"#fff",color:Number(nominal)===n?"#fff":"#66758A",fontSize:10.5,fontWeight:700,cursor:"pointer"}}>{rupiah(n)}</button>)}</div>}
-          <div style={{height:10}}/><Field label="Biaya Admin"><Input type="number" min="0" value={fee} onChange={(e)=>setFee(e.target.value)}/></Field>
-          <div className="dark-total-card"><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><span style={{fontSize:10.5,color:"#8196B5"}}>TOTAL BAYAR</span><div style={{fontSize:10,color:"#657C9D",marginTop:3}}>Nominal + biaya admin</div></div><b style={{fontSize:24,letterSpacing:"-.03em"}}>{rupiah(total)}</b></div></div>
-          <Btn onClick={submit} disabled={saving || !target.trim() || Number(nominal) <= 0 || Number(fee) < 0} style={{width:"100%",marginTop:10}}>{saving?"Memproses…":"Proses Transaksi"}</Btn>
+          <div className="panel-heading">
+            <div>
+              <b>Transaksi baru</b>
+              <span style={{display:"block",marginTop:3}}>
+                Provider belum terhubung • transaksi saat ini hanya simulasi
+              </span>
+            </div>
+            <Badge tone="amber">SIMULASI</Badge>
+          </div>
+
+          <Field label={active.fieldLabel}>
+            <Input value={target} onChange={(e)=>setTarget(e.target.value)} placeholder={active.placeholder}/>
+          </Field>
+
+          <div style={{height:10}}/>
+          <Field label="Nominal">
+            <Input type="number" min="1" value={nominal} onChange={(e)=>setNominal(e.target.value)} placeholder="Masukkan nominal"/>
+          </Field>
+
+          {active.presets.length>0 && (
+            <div className="nominal-presets">
+              {active.presets.map((n)=>(
+                <button
+                  key={n}
+                  onClick={()=>setNominal(n)}
+                  className={Number(nominal)===n ? "nominal-chip active" : "nominal-chip"}
+                >
+                  {rupiah(n)}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div style={{height:10}}/>
+          <Field label="Biaya Admin">
+            <Input type="number" min="0" value={fee} onChange={(e)=>setFee(e.target.value)}/>
+          </Field>
+
+          <div className="dark-total-card">
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
+              <div>
+                <span style={{fontSize:10.5,color:"#8196B5"}}>TOTAL BAYAR</span>
+                <div style={{fontSize:10,color:"#657C9D",marginTop:3}}>Nominal + biaya admin</div>
+              </div>
+              <b style={{fontSize:24,letterSpacing:"-.03em",whiteSpace:"nowrap"}}>{rupiah(total)}</b>
+            </div>
+          </div>
+
+          <Btn
+            onClick={submit}
+            disabled={saving || !target.trim() || Number(nominal) <= 0 || Number(fee) < 0}
+            style={{width:"100%",marginTop:10}}
+          >
+            {saving?"Memproses…":"Proses Transaksi"}
+          </Btn>
         </Card>
+
         <Card>
-          <div className="panel-heading"><div><b>Riwayat PPOB</b><span style={{display:"block",marginTop:3}}>Sinkron dari seluruh perangkat</span></div><Smartphone size={16} color="#7C8798"/></div>
+          <div className="panel-heading">
+            <div>
+              <b>Riwayat PPOB</b>
+              <span style={{display:"block",marginTop:3}}>Sinkron dari seluruh perangkat</span>
+            </div>
+            <Smartphone size={16} color="#7C8798"/>
+          </div>
+
           {loadingPpob ? <Empty text="Memuat transaksi…"/> : transactions.length === 0 ? <Empty text="Belum ada transaksi PPOB."/> : (
             <div className="ppob-history-wrap">
               <div className="ppob-history-head">
@@ -1927,8 +2772,9 @@ function Ppob({ showToast, currentUser, isMobile }) {
               <div className="ppob-history-list">
                 {transactions.slice(0,30).map((t) => {
                   const dt = new Date(t.created_at);
+                  const cancelled = t.status === "voided";
                   return (
-                    <div className="ppob-history-row" key={t.id}>
+                    <div className={`ppob-history-row ${cancelled ? "is-voided" : ""}`} key={t.id}>
                       <div className="tx-icon"><Smartphone size={14}/></div>
                       <div className="ppob-service-cell">
                         <b>{labelFor(t.service_type)}</b>
@@ -1941,6 +2787,11 @@ function Ppob({ showToast, currentUser, isMobile }) {
                       <div className="ppob-amount-cell">
                         <b>{rupiah(Number(t.total_amount||0))}</b>
                         <Badge tone={statusTone(t.status)}>{statusLabel(t.status)}</Badge>
+                        {currentUser.role === "owner" && t.status === "simulation_success" && (
+                          <button className="text-danger-action" onClick={()=>setCancelTx(t)}>
+                            Batalkan
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -1950,6 +2801,16 @@ function Ppob({ showToast, currentUser, isMobile }) {
           )}
         </Card>
       </div>
+
+      {cancelTx && (
+        <ReasonModal
+          title="Batalkan PPOB Simulasi"
+          description={`Batalkan ${labelFor(cancelTx.service_type)} ke ${cancelTx.target}? Fee terkait juga akan dibatalkan dari Keuangan.`}
+          confirmLabel="Batalkan PPOB"
+          onConfirm={voidSimulation}
+          onClose={()=>setCancelTx(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1957,8 +2818,12 @@ function Ppob({ showToast, currentUser, isMobile }) {
 // ---------- Keuangan ----------
 function Keuangan({ showToast, isMobile, currentUser }) {
   const [tab, setTab] = useState("kas");
-  const [txModal, setTxModal] = useState(false);
-  const [debtModal, setDebtModal] = useState(false);
+  const [txModal, setTxModal] = useState(null); // "new" or transaction row
+  const [debtModal, setDebtModal] = useState(null); // "new" or debt row
+  const [paymentDebt, setPaymentDebt] = useState(null);
+  const [cancelTx, setCancelTx] = useState(null);
+  const [cancelDebt, setCancelDebt] = useState(null);
+  const [undoPaymentTx, setUndoPaymentTx] = useState(null);
   const [financeTx, setFinanceTx] = useState([]);
   const [debts, setDebts] = useState([]);
   const [salesOmzet, setSalesOmzet] = useState(0);
@@ -1968,13 +2833,17 @@ function Keuangan({ showToast, isMobile, currentUser }) {
     const [txRes, debtRes, salesRes] = await Promise.all([
       supabase.from("finance_transactions").select("*").order("created_at", { ascending: false }),
       supabase.from("debts").select("*").order("created_at", { ascending: false }),
-      supabase.from("sales").select("total_amount"),
+      supabase.from("sales").select("total_amount,status").eq("status", "completed"),
     ]);
+
     if (txRes.error) showToast("Gagal memuat keuangan: " + txRes.error.message, "warn");
     if (debtRes.error) showToast("Gagal memuat piutang: " + debtRes.error.message, "warn");
+
     if (!txRes.error) setFinanceTx(txRes.data || []);
     if (!debtRes.error) setDebts(debtRes.data || []);
-    if (!salesRes.error) setSalesOmzet((salesRes.data || []).reduce((a, x) => a + Number(x.total_amount || 0), 0));
+    if (!salesRes.error) {
+      setSalesOmzet((salesRes.data || []).reduce((a, x) => a + Number(x.total_amount || 0), 0));
+    }
     setLoadingFinance(false);
   };
 
@@ -1988,79 +2857,570 @@ function Keuangan({ showToast, isMobile, currentUser }) {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  const manualIncome = financeTx.filter((t) => t.type === "in").reduce((a, t) => a + Number(t.amount || 0), 0);
-  const expense = financeTx.filter((t) => t.type === "out").reduce((a, t) => a + Number(t.amount || 0), 0);
+  const activeFinanceTx = financeTx.filter((t) => !t.voided_at);
+  const manualIncome = activeFinanceTx.filter((t) => t.type === "in").reduce((a, t) => a + Number(t.amount || 0), 0);
+  const expense = activeFinanceTx.filter((t) => t.type === "out").reduce((a, t) => a + Number(t.amount || 0), 0);
   const operationalBalance = salesOmzet + manualIncome - expense;
+  const activeDebtCount = debts.filter((d) => d.status === "belum lunas").length;
 
-  const addTx = async (tx) => {
-    const { error } = await supabase.from("finance_transactions").insert({
-      type: tx.type,
-      category: tx.category.trim(),
-      amount: Number(tx.amount),
-      note: tx.note?.trim() || null,
-      user_id: currentUser.id,
-    });
-    if (error) return showToast("Gagal menyimpan: " + error.message, "warn");
-    setTxModal(false); showToast("Catatan keuangan ditambahkan.");
+  const saveTx = async (tx) => {
+    if (tx.id) {
+      const { error } = await supabase.rpc("update_manual_finance_transaction", {
+        p_tx_id: tx.id,
+        p_type: tx.type,
+        p_category: tx.category.trim(),
+        p_amount: Number(tx.amount),
+        p_note: tx.note?.trim() || null,
+      });
+      if (error) {
+        showToast("Gagal memperbarui transaksi: " + error.message, "warn");
+        return false;
+      }
+      setTxModal(null);
+      showToast("Transaksi keuangan diperbarui.");
+    } else {
+      const { error } = await supabase.from("finance_transactions").insert({
+        type: tx.type,
+        category: tx.category.trim(),
+        amount: Number(tx.amount),
+        note: tx.note?.trim() || null,
+        user_id: currentUser.id,
+      });
+      if (error) {
+        showToast("Gagal menyimpan: " + error.message, "warn");
+        return false;
+      }
+      setTxModal(null);
+      showToast("Catatan keuangan ditambahkan.");
+    }
+
     await loadFinance();
+    return true;
   };
+
+  const voidManualTx = async (reason) => {
+    if (!cancelTx) return false;
+    const { error } = await supabase.rpc("void_manual_finance_transaction", {
+      p_tx_id: cancelTx.id,
+      p_reason: reason,
+    });
+    if (error) {
+      showToast("Gagal membatalkan transaksi: " + error.message, "warn");
+      return false;
+    }
+    showToast("Transaksi keuangan dibatalkan.");
+    await loadFinance();
+    return true;
+  };
+
   const addDebt = async (d) => {
     const { error } = await supabase.from("debts").insert({
-      customer: d.customer.trim(), amount: Number(d.amount), note: d.note?.trim() || null, created_by: currentUser.id
+      customer: d.customer.trim(),
+      amount: Number(d.amount),
+      note: d.note?.trim() || null,
+      created_by: currentUser.id,
     });
-    if (error) return showToast("Gagal menyimpan piutang: " + error.message, "warn");
-    setDebtModal(false); showToast("Piutang pelanggan ditambahkan.");
+    if (error) {
+      showToast("Gagal menyimpan piutang: " + error.message, "warn");
+      return false;
+    }
+    setDebtModal(null);
+    showToast("Piutang pelanggan ditambahkan.");
     await loadFinance();
-  };
-  const payDebt = async (id, amount) => {
-    const { error } = await supabase.rpc("pay_debt", { p_debt_id: id, p_amount: Number(amount) });
-    if (error) return showToast("Gagal mencatat pembayaran: " + error.message, "warn");
-    showToast("Pembayaran dicatat.");
-    await loadFinance();
+    return true;
   };
 
-  if (loadingFinance) return <div style={{padding:30,textAlign:"center",color:THEME.muted}}>Memuat keuangan...</div>;
+  const updateDebt = async (d) => {
+    const { error } = await supabase.rpc("update_debt_operational", {
+      p_debt_id: d.id,
+      p_customer: d.customer.trim(),
+      p_amount: Number(d.amount),
+      p_note: d.note?.trim() || null,
+    });
+    if (error) {
+      showToast("Gagal memperbarui piutang: " + error.message, "warn");
+      return false;
+    }
+    setDebtModal(null);
+    showToast("Piutang diperbarui.");
+    await loadFinance();
+    return true;
+  };
+
+  const saveDebt = async (d) => d.id ? updateDebt(d) : addDebt(d);
+
+  const voidDebt = async (reason) => {
+    if (!cancelDebt) return false;
+    const { error } = await supabase.rpc("void_debt_operational", {
+      p_debt_id: cancelDebt.id,
+      p_reason: reason,
+    });
+    if (error) {
+      showToast("Gagal membatalkan piutang: " + error.message, "warn");
+      return false;
+    }
+    showToast("Piutang dibatalkan.");
+    await loadFinance();
+    return true;
+  };
+
+  const payDebt = async (id, amount) => {
+    const { error } = await supabase.rpc("pay_debt", {
+      p_debt_id: id,
+      p_amount: Number(amount),
+    });
+    if (error) {
+      showToast("Gagal mencatat pembayaran: " + error.message, "warn");
+      return false;
+    }
+    showToast("Pembayaran piutang dicatat.");
+    await loadFinance();
+    return true;
+  };
+
+  const undoDebtPayment = async (reason) => {
+    if (!undoPaymentTx) return false;
+    const { error } = await supabase.rpc("undo_debt_payment", {
+      p_finance_tx_id: undoPaymentTx.id,
+      p_reason: reason,
+    });
+    if (error) {
+      showToast("Gagal membatalkan pembayaran: " + error.message, "warn");
+      return false;
+    }
+    showToast("Pembayaran piutang berhasil dibatalkan.");
+    await loadFinance();
+    return true;
+  };
+
+  const sourceLabel = (t) =>
+    t.reference_type === "ppob" ? "PPOB" :
+    t.reference_type === "debt" ? "Piutang" :
+    "Manual";
+
+  const debtStatusLabel = (status) =>
+    status === "lunas" ? "Lunas" :
+    status === "dibatalkan" ? "Dibatalkan" :
+    "Belum Lunas";
+
+  if (loadingFinance) {
+    return <div style={{padding:30,textAlign:"center",color:THEME.muted}}>Memuat keuangan...</div>;
+  }
+
+  const financeActions = (t) => {
+    if (t.voided_at) return null;
+
+    if (!t.reference_type) {
+      return (
+        <div className="row-actions">
+          <button title="Edit transaksi" style={iconBtn} onClick={()=>setTxModal(t)}>
+            <Pencil size={13}/>
+          </button>
+          <button title="Batalkan transaksi" style={iconBtn} onClick={()=>setCancelTx(t)}>
+            <X size={13} color="#BE123C"/>
+          </button>
+        </div>
+      );
+    }
+
+    if (t.reference_type === "debt") {
+      return (
+        <Btn
+          variant="outline"
+          style={{minHeight:30,padding:"5px 8px",fontSize:10.5}}
+          onClick={()=>setUndoPaymentTx(t)}
+        >
+          Batalkan Pembayaran
+        </Btn>
+      );
+    }
+
+    return <span className="system-entry-label">Otomatis</span>;
+  };
 
   return (
     <div>
-      <PageTitle title="Keuangan" subtitle="Arus kas, pemasukan, pengeluaran, dan piutang" right={<div style={{display:"flex",gap:7,flexWrap:"wrap"}}><Btn variant="outline" onClick={()=>setDebtModal(true)}><Plus size={13}/> Tambah Piutang</Btn><Btn onClick={()=>setTxModal(true)}><Plus size={13}/> Catat Transaksi</Btn></div>} />
+      <PageTitle
+        title="Keuangan"
+        subtitle="Arus kas, pemasukan, pengeluaran, dan piutang"
+        right={
+          <div className="page-actions">
+            <Btn variant="outline" onClick={()=>setDebtModal("new")}><Plus size={13}/> Tambah Piutang</Btn>
+            <Btn onClick={()=>setTxModal("new")}><Plus size={13}/> Catat Transaksi</Btn>
+          </div>
+        }
+      />
+
       <div className="finance-hero-v2">
-        <div className="finance-balance-card"><div><div className="hero-kicker">SALDO OPERASIONAL</div><div className="value">{rupiah(operationalBalance)}</div></div><div style={{display:"flex",gap:14,fontSize:10.5,color:"#8195B4"}}><span>Omzet penjualan {rupiah(salesOmzet)}</span><span>+</span><span>Arus kas lainnya {rupiah(manualIncome-expense)}</span></div></div>
-        <div className="finance-side-grid"><div className="finance-mini-card"><span>Pemasukan lain</span><b style={{color:"#0F8B6D"}}>{rupiah(manualIncome)}</b></div><div className="finance-mini-card"><span>Pengeluaran</span><b style={{color:"#BE123C"}}>{rupiah(expense)}</b></div><div className="finance-mini-card"><span>Omzet penjualan</span><b>{rupiah(salesOmzet)}</b></div><div className="finance-mini-card"><span>Piutang aktif</span><b>{debts.filter((d)=>d.status!=="lunas").length}</b></div></div>
+        <div className="finance-balance-card">
+          <div>
+            <div className="hero-kicker">SALDO OPERASIONAL</div>
+            <div className="value">{rupiah(operationalBalance)}</div>
+          </div>
+          <div className="finance-balance-breakdown">
+            <span>Omzet penjualan {rupiah(salesOmzet)}</span>
+            <span>+</span>
+            <span>Arus kas lainnya {rupiah(manualIncome-expense)}</span>
+          </div>
+        </div>
+
+        <div className="finance-side-grid">
+          <div className="finance-mini-card"><span>Pemasukan lain</span><b style={{color:"#0F8B6D"}}>{rupiah(manualIncome)}</b></div>
+          <div className="finance-mini-card"><span>Pengeluaran</span><b style={{color:"#BE123C"}}>{rupiah(expense)}</b></div>
+          <div className="finance-mini-card"><span>Omzet penjualan</span><b>{rupiah(salesOmzet)}</b></div>
+          <div className="finance-mini-card"><span>Piutang aktif</span><b>{activeDebtCount}</b></div>
+        </div>
       </div>
-      <div style={{display:"inline-flex",padding:3,borderRadius:10,background:"#E9EDF3",marginBottom:10}}>{[["kas","Riwayat Kas"],["piutang","Piutang"]].map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{border:"none",padding:"7px 12px",borderRadius:8,background:tab===k?"#fff":"transparent",boxShadow:tab===k?"0 2px 8px rgba(15,23,42,.06)":"none",fontSize:10.8,fontWeight:750,color:tab===k?"#111827":"#788598",cursor:"pointer"}}>{l}</button>)}</div>
-      {tab==="kas"&&<Card style={{padding:0,overflow:"hidden"}}><div style={{padding:"12px 14px",fontSize:10.5,color:"#8290A3",borderBottom:"1px solid #EEF1F5"}}>Penjualan kasir dihitung otomatis dari data penjualan. Tabel ini hanya menampilkan transaksi manual, fee PPOB, dan pembayaran piutang.</div><div style={{overflowX:"auto"}}><table><thead><tr style={{textAlign:"left",fontSize:10,color:"#7C8899",textTransform:"uppercase"}}><th style={th}>Tanggal</th><th style={th}>Kategori</th><th style={th}>Catatan</th><th style={th}>Jenis</th><th style={th} className="num">Jumlah</th></tr></thead><tbody>{financeTx.map((t)=><tr key={t.id} style={{fontSize:12}}><td style={{...td,whiteSpace:"nowrap"}}>{formatDateTime(t.created_at)}</td><td style={td}><b>{t.category}</b></td><td style={{...td,maxWidth:360,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={t.note||"-"}>{t.note||"-"}</td><td style={td}><Badge tone={t.type==="in"?"green":"red"}>{t.type==="in"?"Masuk":"Keluar"}</Badge></td><td style={{...td,fontWeight:800,color:t.type==="in"?"#0F8B6D":"#BE123C",whiteSpace:"nowrap"}} className="num">{t.type==="in"?"+":"-"}{rupiah(Number(t.amount))}</td></tr>)}</tbody></table></div>{financeTx.length===0&&<Empty text="Belum ada catatan keuangan manual."/>}</Card>}
-      {tab==="piutang"&&<Card style={{padding:0,overflow:"hidden"}}><div style={{overflowX:"auto"}}><table><thead><tr style={{textAlign:"left",fontSize:10,color:"#7C8899",textTransform:"uppercase"}}><th style={th}>Pelanggan</th><th style={th} className="num">Total</th><th style={th} className="num">Terbayar</th><th style={th} className="num">Sisa</th><th style={th} className="center">Status</th><th style={th} className="actions">Aksi</th></tr></thead><tbody>{debts.map((d)=><tr key={d.id} style={{fontSize:12}}><td style={td}><b>{d.customer}</b><div style={{fontSize:9.8,color:"#9AA5B5",marginTop:2}}>{d.note}</div></td><td style={td} className="num">{rupiah(Number(d.amount))}</td><td style={td} className="num">{rupiah(Number(d.paid))}</td><td style={td} className="num"><b>{rupiah(Number(d.amount)-Number(d.paid))}</b></td><td style={td} className="center"><Badge tone={d.status==="lunas"?"green":"amber"}>{d.status==="lunas"?"Lunas":"Belum Lunas"}</Badge></td><td style={td}>{d.status!=="lunas"&&<Btn variant="outline" style={{minHeight:30,padding:"5px 9px"}} onClick={()=>{const remaining=Number(d.amount)-Number(d.paid);const amt=Number(prompt("Jumlah pembayaran:",remaining));if(amt>0)payDebt(d.id,amt);}}>Bayar</Btn>}</td></tr>)}</tbody></table></div>{debts.length===0&&<Empty text="Belum ada piutang pelanggan."/>}</Card>}
-      {txModal&&<TxModal onSave={addTx} onClose={()=>setTxModal(false)}/>} {debtModal&&<DebtModal onSave={addDebt} onClose={()=>setDebtModal(false)}/>} 
+
+      <div className="segmented-tabs">
+        {[["kas","Riwayat Kas"],["piutang","Piutang"]].map(([k,l])=>(
+          <button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}>{l}</button>
+        ))}
+      </div>
+
+      {tab === "kas" && (
+        <>
+          <div className="section-note">
+            Penjualan kasir dihitung otomatis dari data penjualan. Transaksi manual dapat diedit atau dibatalkan. Transaksi otomatis dikoreksi dari sumbernya agar data tetap konsisten.
+          </div>
+
+          {isMobile ? (
+            <div className="mobile-card-list">
+              {financeTx.length === 0 && <Empty text="Belum ada catatan keuangan."/>}
+              {financeTx.map((t)=>(
+                <div className={`finance-mobile-card ${t.voided_at ? "is-voided" : ""}`} key={t.id}>
+                  <div className="finance-mobile-top">
+                    <div className="mobile-card-title">
+                      <b>{t.category}</b>
+                      <span>{formatDateTime(t.created_at)} • {sourceLabel(t)}</span>
+                    </div>
+                    <div className={`money-value ${t.type === "in" ? "income" : "expense"}`}>
+                      {t.type==="in"?"+":"-"}{rupiah(Number(t.amount))}
+                    </div>
+                  </div>
+
+                  {t.note && <div className="mobile-note">{t.note}</div>}
+
+                  <div className="mobile-card-footer">
+                    <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                      <Badge tone={t.type==="in"?"green":"red"}>{t.type==="in"?"Pemasukan":"Pengeluaran"}</Badge>
+                      {t.voided_at && <Badge tone="slate">Dibatalkan</Badge>}
+                    </div>
+                    {financeActions(t)}
+                  </div>
+
+                  {t.voided_at && t.void_reason && (
+                    <div className="void-reason">Alasan: {t.void_reason}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <Card style={{padding:0,overflow:"hidden"}}>
+              <div style={{overflowX:"auto"}}>
+                <table>
+                  <thead>
+                    <tr style={{fontSize:10,color:"#7C8899",textTransform:"uppercase"}}>
+                      <th style={th}>Tanggal</th>
+                      <th style={th}>Kategori</th>
+                      <th style={th}>Catatan</th>
+                      <th style={th}>Sumber</th>
+                      <th style={th}>Jenis</th>
+                      <th style={th} className="num">Jumlah</th>
+                      <th style={th}>Status</th>
+                      <th style={th} className="actions">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {financeTx.map((t)=>(
+                      <tr key={t.id} className={t.voided_at ? "is-voided" : ""} style={{fontSize:12}}>
+                        <td style={{...td,whiteSpace:"nowrap"}}>{formatDateTime(t.created_at)}</td>
+                        <td style={td}><b>{t.category}</b></td>
+                        <td style={{...td,maxWidth:300,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={t.note||"-"}>{t.note||"-"}</td>
+                        <td style={td}><Badge tone={t.reference_type ? "slate" : "blue"}>{sourceLabel(t)}</Badge></td>
+                        <td style={td}><Badge tone={t.type==="in"?"green":"red"}>{t.type==="in"?"Masuk":"Keluar"}</Badge></td>
+                        <td style={{...td,fontWeight:800,color:t.voided_at?"#94A3B8":t.type==="in"?"#0F8B6D":"#BE123C",whiteSpace:"nowrap"}} className="num">
+                          {t.type==="in"?"+":"-"}{rupiah(Number(t.amount))}
+                        </td>
+                        <td style={td}>{t.voided_at ? <Badge tone="slate">Dibatalkan</Badge> : <Badge tone="green">Aktif</Badge>}</td>
+                        <td style={td} className="actions">{financeActions(t)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {financeTx.length===0&&<Empty text="Belum ada catatan keuangan."/>}
+            </Card>
+          )}
+        </>
+      )}
+
+      {tab === "piutang" && (
+        isMobile ? (
+          <div className="mobile-card-list">
+            {debts.length===0&&<Empty text="Belum ada piutang pelanggan."/>}
+            {debts.map((d)=>{
+              const remaining = Math.max(Number(d.amount||0)-Number(d.paid||0),0);
+              const cancelled = d.status === "dibatalkan";
+              return (
+                <div className={`debt-mobile-card ${cancelled ? "is-voided" : ""}`} key={d.id}>
+                  <div className="finance-mobile-top">
+                    <div className="mobile-card-title">
+                      <b>{d.customer}</b>
+                      <span>{formatDate(d.created_at)}</span>
+                    </div>
+                    <Badge tone={d.status==="lunas"?"green":cancelled?"slate":"amber"}>{debtStatusLabel(d.status)}</Badge>
+                  </div>
+
+                  {d.note && <div className="mobile-note">{d.note}</div>}
+
+                  <div className="debt-number-grid">
+                    <div><span>Total</span><b>{rupiah(Number(d.amount||0))}</b></div>
+                    <div><span>Terbayar</span><b>{rupiah(Number(d.paid||0))}</b></div>
+                    <div><span>Sisa</span><b>{rupiah(remaining)}</b></div>
+                  </div>
+
+                  {!cancelled && (
+                    <div className="mobile-card-actions">
+                      {d.status!=="lunas" && <Btn onClick={()=>setPaymentDebt(d)} style={{minHeight:34}}>Bayar</Btn>}
+                      <Btn variant="outline" onClick={()=>setDebtModal(d)} style={{minHeight:34}}>Edit</Btn>
+                      {Number(d.paid||0)===0 && (
+                        <Btn variant="danger" onClick={()=>setCancelDebt(d)} style={{minHeight:34}}>Batalkan</Btn>
+                      )}
+                    </div>
+                  )}
+
+                  {cancelled && d.void_reason && <div className="void-reason">Alasan: {d.void_reason}</div>}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <Card style={{padding:0,overflow:"hidden"}}>
+            <div style={{overflowX:"auto"}}>
+              <table>
+                <thead>
+                  <tr style={{fontSize:10,color:"#7C8899",textTransform:"uppercase"}}>
+                    <th style={th}>Pelanggan</th>
+                    <th style={th} className="num">Total</th>
+                    <th style={th} className="num">Terbayar</th>
+                    <th style={th} className="num">Sisa</th>
+                    <th style={th} className="center">Status</th>
+                    <th style={th} className="actions">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {debts.map((d)=>{
+                    const remaining = Math.max(Number(d.amount||0)-Number(d.paid||0),0);
+                    const cancelled = d.status==="dibatalkan";
+                    return (
+                      <tr key={d.id} className={cancelled?"is-voided":""} style={{fontSize:12}}>
+                        <td style={td}>
+                          <b>{d.customer}</b>
+                          <div style={{fontSize:9.8,color:"#9AA5B5",marginTop:2}}>{d.note || "-"}</div>
+                        </td>
+                        <td style={td} className="num">{rupiah(Number(d.amount))}</td>
+                        <td style={td} className="num">{rupiah(Number(d.paid))}</td>
+                        <td style={td} className="num"><b>{rupiah(remaining)}</b></td>
+                        <td style={td} className="center">
+                          <Badge tone={d.status==="lunas"?"green":cancelled?"slate":"amber"}>{debtStatusLabel(d.status)}</Badge>
+                        </td>
+                        <td style={td} className="actions">
+                          {!cancelled && (
+                            <div className="row-actions">
+                              {d.status!=="lunas" && <Btn onClick={()=>setPaymentDebt(d)} style={{minHeight:30,padding:"5px 8px"}}>Bayar</Btn>}
+                              <button title="Edit piutang" style={iconBtn} onClick={()=>setDebtModal(d)}><Pencil size={13}/></button>
+                              {Number(d.paid||0)===0 && <button title="Batalkan piutang" style={iconBtn} onClick={()=>setCancelDebt(d)}><X size={13} color="#BE123C"/></button>}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {debts.length===0&&<Empty text="Belum ada piutang pelanggan."/>}
+          </Card>
+        )
+      )}
+
+      {txModal && (
+        <TxModal
+          transaction={txModal==="new" ? null : txModal}
+          onSave={saveTx}
+          onClose={()=>setTxModal(null)}
+        />
+      )}
+
+      {debtModal && (
+        <DebtModal
+          debt={debtModal==="new" ? null : debtModal}
+          onSave={saveDebt}
+          onClose={()=>setDebtModal(null)}
+        />
+      )}
+
+      {paymentDebt && (
+        <DebtPaymentModal debt={paymentDebt} onPay={payDebt} onClose={()=>setPaymentDebt(null)}/>
+      )}
+
+      {cancelTx && (
+        <ReasonModal
+          title="Batalkan Transaksi Keuangan"
+          description={`Transaksi ${cancelTx.category} sebesar ${rupiah(Number(cancelTx.amount))} akan dibatalkan, bukan dihapus permanen.`}
+          onConfirm={voidManualTx}
+          onClose={()=>setCancelTx(null)}
+        />
+      )}
+
+      {cancelDebt && (
+        <ReasonModal
+          title="Batalkan Piutang"
+          description={`Piutang ${cancelDebt.customer} akan ditandai dibatalkan. Tindakan ini hanya tersedia sebelum ada pembayaran.`}
+          confirmLabel="Batalkan Piutang"
+          onConfirm={voidDebt}
+          onClose={()=>setCancelDebt(null)}
+        />
+      )}
+
+      {undoPaymentTx && (
+        <ReasonModal
+          title="Batalkan Pembayaran Piutang"
+          description={`Pembayaran ${rupiah(Number(undoPaymentTx.amount))} akan dibalik dan sisa piutang dihitung ulang secara otomatis.`}
+          confirmLabel="Batalkan Pembayaran"
+          onConfirm={undoDebtPayment}
+          onClose={()=>setUndoPaymentTx(null)}
+        />
+      )}
     </div>
   );
 }
-function TxModal({ onSave, onClose }) {
-  const [f, setF] = useState({ type: "in", category: "", amount: "", note: "" });
-  return <Modal title="Catat Transaksi Keuangan" onClose={onClose} width={380}><div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-    <div style={{ display: "flex", gap: 6 }}>{["in", "out"].map((t) => <button key={t} onClick={() => setF({ ...f, type: t })} style={{ flex:1,padding:"8px",borderRadius:8,fontSize:12.5,fontWeight:600,cursor:"pointer",border:f.type===t?"1.5px solid #2563EB":"1px solid #D8DCE3",background:f.type===t?"#EFF6FF":"#fff" }}>{t === "in" ? "Pemasukan" : "Pengeluaran"}</button>)}</div>
-    <Field label="Kategori"><Input value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} placeholder={f.type==="in" ? "Contoh: Modal tambahan, pendapatan jasa" : "Contoh: Sewa tempat, listrik toko"} /></Field>
-    <Field label="Jumlah"><Input type="number" min="1" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field>
-    <Field label="Catatan"><Input value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
-    <Btn disabled={!f.category.trim() || Number(f.amount) <= 0} onClick={() => onSave(f)} style={{ justifyContent:"center" }}>Simpan</Btn>
-  </div></Modal>;
+
+function TxModal({ transaction, onSave, onClose }) {
+  const [f, setF] = useState(transaction ? {
+    id: transaction.id,
+    type: transaction.type,
+    category: transaction.category || "",
+    amount: String(transaction.amount || ""),
+    note: transaction.note || "",
+  } : {
+    type: "in",
+    category: "",
+    amount: "",
+    note: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const valid = f.category.trim().length > 0 && Number(f.amount) > 0;
+
+  const submit = async () => {
+    if (!valid || saving) return;
+    setSaving(true);
+    const ok = await onSave(f);
+    setSaving(false);
+    if (ok !== false) onClose();
+  };
+
+  return (
+    <Modal title={transaction ? "Edit Transaksi Keuangan" : "Catat Transaksi Keuangan"} onClose={onClose} width={400}>
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <div className="transaction-type-toggle">
+          {["in","out"].map((t)=>(
+            <button key={t} className={f.type===t?"active":""} onClick={()=>setF({...f,type:t})}>
+              {t==="in"?"Pemasukan":"Pengeluaran"}
+            </button>
+          ))}
+        </div>
+        <Field label="Kategori">
+          <Input
+            value={f.category}
+            onChange={(e)=>setF({...f,category:e.target.value})}
+            placeholder={f.type==="in"?"Contoh: Modal tambahan, pendapatan jasa":"Contoh: Sewa tempat, listrik toko"}
+          />
+        </Field>
+        <Field label="Jumlah">
+          <Input type="number" min="1" value={f.amount} onChange={(e)=>setF({...f,amount:e.target.value})} placeholder="Rp0"/>
+        </Field>
+        <Field label="Catatan">
+          <Input value={f.note} onChange={(e)=>setF({...f,note:e.target.value})} placeholder="Opsional"/>
+        </Field>
+        <Btn disabled={!valid || saving} onClick={submit}>
+          {saving ? "Menyimpan…" : transaction ? "Simpan Perubahan" : "Simpan Transaksi"}
+        </Btn>
+      </div>
+    </Modal>
+  );
 }
-function DebtModal({ onSave, onClose }) {
-  const [f, setF] = useState({ customer: "", amount: "", note: "" });
-  return <Modal title="Tambah Piutang Pelanggan" onClose={onClose} width={380}><div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-    <Field label="Nama Pelanggan"><Input value={f.customer} onChange={(e) => setF({ ...f, customer:e.target.value })} /></Field>
-    <Field label="Jumlah Piutang"><Input type="number" min="1" value={f.amount} onChange={(e) => setF({ ...f, amount:e.target.value })} placeholder="Rp0" /></Field>
-    <Field label="Catatan"><Input value={f.note} onChange={(e) => setF({ ...f, note:e.target.value })} placeholder="Contoh: Pembelian aksesoris belum dibayar" /></Field>
-    <Btn disabled={!f.customer.trim() || Number(f.amount) <= 0} onClick={() => onSave(f)} style={{ justifyContent:"center" }}>Simpan</Btn>
-  </div></Modal>;
+
+function DebtModal({ debt, onSave, onClose }) {
+  const [f, setF] = useState(debt ? {
+    id: debt.id,
+    customer: debt.customer || "",
+    amount: String(debt.amount || ""),
+    paid: Number(debt.paid || 0),
+    note: debt.note || "",
+  } : {
+    customer:"",
+    amount:"",
+    paid:0,
+    note:"",
+  });
+  const [saving, setSaving] = useState(false);
+  const valid = f.customer.trim().length > 0 && Number(f.amount) > 0;
+  const amountLocked = !!debt && Number(debt.paid||0) > 0;
+
+  const submit = async () => {
+    if (!valid || saving) return;
+    setSaving(true);
+    const ok = await onSave(f);
+    setSaving(false);
+    if (ok !== false) onClose();
+  };
+
+  return (
+    <Modal title={debt ? "Edit Piutang Pelanggan" : "Tambah Piutang Pelanggan"} onClose={onClose} width={400}>
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <Field label="Nama Pelanggan">
+          <Input value={f.customer} onChange={(e)=>setF({...f,customer:e.target.value})}/>
+        </Field>
+        <Field label="Jumlah Piutang">
+          <Input
+            type="number"
+            min="1"
+            value={f.amount}
+            disabled={amountLocked}
+            onChange={(e)=>setF({...f,amount:e.target.value})}
+            placeholder="Rp0"
+            style={amountLocked?{background:"#F4F6F8",color:"#8490A2"}:{}}
+          />
+        </Field>
+        {amountLocked && (
+          <div style={{fontSize:10.5,color:"#8A97A9",lineHeight:1.5}}>
+            Jumlah pokok dikunci karena piutang sudah memiliki pembayaran. Nama pelanggan dan catatan tetap dapat diperbaiki.
+          </div>
+        )}
+        <Field label="Catatan">
+          <Input
+            value={f.note}
+            onChange={(e)=>setF({...f,note:e.target.value})}
+            placeholder="Contoh: Pembelian aksesoris belum dibayar"
+          />
+        </Field>
+        <Btn disabled={!valid || saving} onClick={submit}>
+          {saving ? "Menyimpan…" : debt ? "Simpan Perubahan" : "Simpan Piutang"}
+        </Btn>
+      </div>
+    </Modal>
+  );
 }
 
 // ---------- Laporan ----------
-function Laporan({ isMobile, showToast }) {
+function Laporan({ isMobile, showToast, currentUser }) {
   const [range, setRange] = useState("7");
   const [sales, setSales] = useState([]);
   const [items, setItems] = useState([]);
   const [loadingReport, setLoadingReport] = useState(true);
+  const [cancelSale, setCancelSale] = useState(null);
   const days = Number(range);
 
   const rangeStart = () => {
@@ -2076,7 +3436,7 @@ function Laporan({ isMobile, showToast }) {
 
     const salesRes = await supabase
       .from("sales")
-      .select("id, invoice_number, customer_name, cashier_name, payment_method, total_amount, total_profit, profit, created_at")
+      .select("id, invoice_number, customer_name, cashier_name, payment_method, total_amount, total_profit, profit, created_at, status, voided_at, void_reason")
       .gte("created_at", start.toISOString())
       .order("created_at", { ascending: true });
 
@@ -2124,8 +3484,12 @@ function Laporan({ isMobile, showToast }) {
     return () => { supabase.removeChannel(channel); };
   }, [range]);
 
-  const omzet = sales.reduce((a, s) => a + Number(s.total_amount || 0), 0);
-  const profit = sales.reduce((a, s) => a + Number(s.profit ?? s.total_profit ?? 0), 0);
+  const activeSales = sales.filter((s)=>s.status !== "voided");
+  const activeSaleIds = new Set(activeSales.map((s)=>s.id));
+  const activeItems = items.filter((it)=>activeSaleIds.has(it.sale_id));
+
+  const omzet = activeSales.reduce((a, s) => a + Number(s.total_amount || 0), 0);
+  const profit = activeSales.reduce((a, s) => a + Number(s.profit ?? s.total_profit ?? 0), 0);
 
   const byDay = useMemo(() => {
     const map = {};
@@ -2133,21 +3497,11 @@ function Laporan({ isMobile, showToast }) {
       const d = new Date();
       d.setHours(0, 0, 0, 0);
       d.setDate(d.getDate() - i);
-      const key = [
-        d.getFullYear(),
-        String(d.getMonth() + 1).padStart(2, "0"),
-        String(d.getDate()).padStart(2, "0"),
-      ].join("-");
-      map[key] = 0;
+      map[localDateKey(d)] = 0;
     }
 
-    sales.forEach((s) => {
-      const d = new Date(s.created_at);
-      const key = [
-        d.getFullYear(),
-        String(d.getMonth() + 1).padStart(2, "0"),
-        String(d.getDate()).padStart(2, "0"),
-      ].join("-");
+    activeSales.forEach((s) => {
+      const key = localDateKey(s.created_at);
       if (key in map) map[key] += Number(s.total_amount || 0);
     });
 
@@ -2159,7 +3513,7 @@ function Laporan({ isMobile, showToast }) {
 
   const topProducts = useMemo(() => {
     const map = {};
-    items.forEach((it) => {
+    activeItems.forEach((it) => {
       const name = it.product_name || "Produk";
       map[name] = (map[name] || 0) + Number(it.quantity || 0);
     });
@@ -2167,13 +3521,13 @@ function Laporan({ isMobile, showToast }) {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 6)
       .map(([name, qty]) => ({ name, qty }));
-  }, [items]);
+  }, [items, sales]);
 
   const COLORS = ["#2563EB", "#0EA5E9", "#7C3AED", "#D97706", "#DC2626", "#0D9488"];
 
   const csvCell = (value) => {
-    const text = String(value ?? "");
-    return `"${text.replaceAll('"', '""')}"`;
+    const cellText = String(value ?? "");
+    return `"${cellText.replaceAll('"', '""')}"`;
   };
 
   const exportCsv = () => {
@@ -2182,6 +3536,7 @@ function Laporan({ isMobile, showToast }) {
       "Tanggal",
       "Waktu",
       "Invoice",
+      "Status",
       "Item",
       "SKU",
       "Qty",
@@ -2191,6 +3546,7 @@ function Laporan({ isMobile, showToast }) {
       "Pembayaran",
       "Pelanggan",
       "Kasir",
+      "Alasan Pembatalan",
     ]];
 
     items.forEach((it) => {
@@ -2200,6 +3556,7 @@ function Laporan({ isMobile, showToast }) {
         formatDate(occurredAt),
         formatTime(occurredAt),
         sale.invoice_number || "",
+        sale.status === "voided" ? "Dibatalkan" : "Selesai",
         it.product_name || "",
         it.sku || "",
         Number(it.quantity || 0),
@@ -2209,6 +3566,7 @@ function Laporan({ isMobile, showToast }) {
         paymentLabel(sale.payment_method),
         sale.customer_name || "Umum",
         sale.cashier_name || "",
+        sale.void_reason || "",
       ]);
     });
 
@@ -2222,16 +3580,186 @@ function Laporan({ isMobile, showToast }) {
     URL.revokeObjectURL(url);
   };
 
-  if (loadingReport) return <div style={{padding:30,textAlign:"center",color:THEME.muted}}>Memuat laporan...</div>;
+  const voidSale = async (reason) => {
+    if (!cancelSale) return false;
+    const { error } = await supabase.rpc("void_sale_operational", {
+      p_sale_id: cancelSale.id,
+      p_reason: reason,
+    });
+    if (error) {
+      showToast("Gagal membatalkan penjualan: " + error.message, "warn");
+      return false;
+    }
+    showToast("Penjualan dibatalkan dan stok dikembalikan.");
+    await loadReport();
+    return true;
+  };
+
+  if (loadingReport) {
+    return <div style={{padding:30,textAlign:"center",color:THEME.muted}}>Memuat laporan...</div>;
+  }
+
+  const recentForAudit = [...sales].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
 
   return (
     <div>
-      <PageTitle title="Laporan & Analitik" subtitle="Ringkasan performa penjualan toko" right={<div style={{display:"flex",gap:7}}><Select value={range} onChange={(e)=>setRange(e.target.value)} style={{width:145}}><option value="7">7 Hari</option><option value="30">30 Hari</option><option value="90">90 Hari</option></Select><Btn variant="outline" onClick={exportCsv} disabled={sales.length===0}><Download size={13}/> {isMobile?"":"Unduh CSV"}</Btn></div>} />
-      <div className="report-hero-v2"><div className="report-stat"><span>Total Omzet</span><b>{rupiah(omzet)}</b></div><div className="report-stat"><span>Profit Kotor</span><b>{rupiah(profit)}</b></div><div className="report-stat"><span>Jumlah Transaksi</span><b>{sales.length}</b></div></div>
-      <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"minmax(0,1.45fr) minmax(320px,.55fr)",gap:14}}>
-        <Card><div className="panel-heading"><div><b>Tren omzet</b><span style={{display:"block",marginTop:3}}>Pergerakan omzet harian</span></div><BarChart3 size={16} color="#7B8799"/></div><div style={{width:"100%",height:280}}><ResponsiveContainer><BarChart data={byDay}><CartesianGrid strokeDasharray="4 4" stroke="#EEF1F5" vertical={false}/><XAxis dataKey="date" tick={{fontSize:10,fill:"#8592A4"}} axisLine={false} tickLine={false} minTickGap={days>=90?28:days>=30?18:10}/><YAxis tick={{fontSize:10,fill:"#8592A4"}} axisLine={false} tickLine={false} tickFormatter={(v)=>(v>=1000000?`${(v/1000000).toFixed(v%1000000?1:0)}jt`:v>=1000?`${Math.round(v/1000)}k`:v)}/><Tooltip formatter={(v)=>rupiah(v)} labelFormatter={(label)=>`Tanggal ${label}`}/><Bar dataKey="total" fill="#4F7CFF" radius={[7,7,2,2]} maxBarSize={34}/></BarChart></ResponsiveContainer></div></Card>
-        <Card><div className="panel-heading"><div><b>Produk terlaris</b><span style={{display:"block",marginTop:3}}>Berdasarkan qty terjual</span></div><Package size={16} color="#7B8799"/></div>{topProducts.length===0?<Empty text="Belum ada data penjualan."/>:<>{<div style={{width:"100%",height:190}}><ResponsiveContainer><PieChart><Pie data={topProducts} dataKey="qty" nameKey="name" innerRadius={48} outerRadius={70} paddingAngle={3}>{topProducts.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Pie><Tooltip/></PieChart></ResponsiveContainer></div>}<div>{topProducts.map((p,i)=><div key={p.name} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:"1px solid #F0F2F5"}}><span style={{width:7,height:7,borderRadius:50,background:COLORS[i%COLORS.length]}}/><span style={{fontSize:10.8,flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</span><b style={{fontSize:10.8}}>{p.qty}</b></div>)}</div></>}</Card>
+      <PageTitle
+        title="Laporan & Analitik"
+        subtitle="Ringkasan performa penjualan toko"
+        right={
+          <div className="page-actions report-actions">
+            <Select value={range} onChange={(e)=>setRange(e.target.value)} style={{width:145}}>
+              <option value="7">7 Hari</option>
+              <option value="30">30 Hari</option>
+              <option value="90">90 Hari</option>
+            </Select>
+            <Btn variant="outline" onClick={exportCsv} disabled={sales.length===0}>
+              <Download size={13}/> {isMobile?"CSV":"Unduh CSV"}
+            </Btn>
+          </div>
+        }
+      />
+
+      <div className="report-hero-v2">
+        <div className="report-stat"><span>Total Omzet</span><b>{rupiah(omzet)}</b></div>
+        <div className="report-stat"><span>Profit Kotor</span><b>{rupiah(profit)}</b></div>
+        <div className="report-stat"><span>Jumlah Transaksi</span><b>{activeSales.length}</b></div>
       </div>
+
+      <div className="report-grid-v2">
+        <Card>
+          <div className="panel-heading">
+            <div><b>Tren omzet</b><span style={{display:"block",marginTop:3}}>Pergerakan omzet harian</span></div>
+            <BarChart3 size={16} color="#7B8799"/>
+          </div>
+          <div className="report-chart-wrap">
+            <ResponsiveContainer>
+              <BarChart data={byDay}>
+                <CartesianGrid strokeDasharray="4 4" stroke="#EEF1F5" vertical={false}/>
+                <XAxis dataKey="date" tick={{fontSize:isMobile?11:10,fill:"#8592A4"}} axisLine={false} tickLine={false} minTickGap={days>=90?28:days>=30?18:10}/>
+                <YAxis tick={{fontSize:isMobile?11:10,fill:"#8592A4"}} axisLine={false} tickLine={false} width={isMobile?46:52} tickFormatter={(v)=>(v>=1000000?`${(v/1000000).toFixed(v%1000000?1:0)}jt`:v>=1000?`${Math.round(v/1000)}k`:v)}/>
+                <Tooltip formatter={(v)=>rupiah(v)} labelFormatter={(label)=>`Tanggal ${label}`}/>
+                <Bar dataKey="total" fill="#4F7CFF" radius={[7,7,2,2]} maxBarSize={34}/>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+
+        <Card>
+          <div className="panel-heading">
+            <div><b>Produk terlaris</b><span style={{display:"block",marginTop:3}}>Berdasarkan jumlah terjual</span></div>
+            <Package size={16} color="#7B8799"/>
+          </div>
+          {topProducts.length===0 ? <Empty text="Belum ada data penjualan."/> : (
+            <>
+              <div className="top-product-chart">
+                <ResponsiveContainer>
+                  <PieChart>
+                    <Pie data={topProducts} dataKey="qty" nameKey="name" innerRadius={48} outerRadius={70} paddingAngle={3}>
+                      {topProducts.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+                    </Pie>
+                    <Tooltip/>
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div>
+                {topProducts.map((p,i)=>(
+                  <div className="top-product-row" key={p.name}>
+                    <span style={{width:7,height:7,borderRadius:50,background:COLORS[i%COLORS.length],flexShrink:0}}/>
+                    <span>{p.name}</span>
+                    <b>{p.qty}</b>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </Card>
+      </div>
+
+      <Card style={{marginTop:14}}>
+        <div className="panel-heading">
+          <div>
+            <b>Riwayat Penjualan</b>
+            <span style={{display:"block",marginTop:3}}>
+              Penjualan yang salah dibatalkan, bukan dihapus. Stok akan dikembalikan otomatis.
+            </span>
+          </div>
+          <Badge tone="blue">{recentForAudit.length} transaksi</Badge>
+        </div>
+
+        {recentForAudit.length===0 ? <Empty text="Belum ada transaksi penjualan."/> : isMobile ? (
+          <div className="mobile-card-list">
+            {recentForAudit.map((sale)=>(
+              <div className={`sale-audit-mobile-card ${sale.status==="voided"?"is-voided":""}`} key={sale.id}>
+                <div className="finance-mobile-top">
+                  <div className="mobile-card-title">
+                    <b>{sale.invoice_number}</b>
+                    <span>{formatDateTime(sale.created_at)} • {sale.cashier_name || "Kasir"}</span>
+                  </div>
+                  <b className="sale-total">{rupiah(Number(sale.total_amount||0))}</b>
+                </div>
+                <div className="mobile-card-footer">
+                  <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                    <Badge tone={sale.status==="voided"?"slate":"green"}>{sale.status==="voided"?"Dibatalkan":"Selesai"}</Badge>
+                    <Badge tone="blue">{paymentLabel(sale.payment_method)}</Badge>
+                  </div>
+                  {sale.status!=="voided" && currentUser.role==="owner" && (
+                    <Btn variant="danger" onClick={()=>setCancelSale(sale)} style={{minHeight:32,padding:"5px 9px"}}>
+                      Batalkan
+                    </Btn>
+                  )}
+                </div>
+                {sale.void_reason && <div className="void-reason">Alasan: {sale.void_reason}</div>}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{overflowX:"auto"}}>
+            <table>
+              <thead>
+                <tr style={{fontSize:10,color:"#7C8899",textTransform:"uppercase"}}>
+                  <th style={th}>Tanggal</th>
+                  <th style={th}>Invoice</th>
+                  <th style={th}>Kasir</th>
+                  <th style={th}>Pembayaran</th>
+                  <th style={th} className="num">Total</th>
+                  <th style={th}>Status</th>
+                  <th style={th} className="actions">Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentForAudit.map((sale)=>(
+                  <tr key={sale.id} className={sale.status==="voided"?"is-voided":""} style={{fontSize:12}}>
+                    <td style={{...td,whiteSpace:"nowrap"}}>{formatDateTime(sale.created_at)}</td>
+                    <td style={td}><b>{sale.invoice_number}</b></td>
+                    <td style={td}>{sale.cashier_name || "-"}</td>
+                    <td style={td}><Badge tone="blue">{paymentLabel(sale.payment_method)}</Badge></td>
+                    <td style={td} className="num"><b>{rupiah(Number(sale.total_amount||0))}</b></td>
+                    <td style={td}><Badge tone={sale.status==="voided"?"slate":"green"}>{sale.status==="voided"?"Dibatalkan":"Selesai"}</Badge></td>
+                    <td style={td} className="actions">
+                      {sale.status!=="voided" && currentUser.role==="owner" && (
+                        <Btn variant="danger" onClick={()=>setCancelSale(sale)} style={{minHeight:30,padding:"5px 8px"}}>
+                          Batalkan
+                        </Btn>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {cancelSale && (
+        <ReasonModal
+          title="Batalkan Penjualan"
+          description={`Batalkan ${cancelSale.invoice_number} sebesar ${rupiah(Number(cancelSale.total_amount||0))}? Stok semua item akan dikembalikan otomatis.`}
+          confirmLabel="Batalkan Penjualan"
+          onConfirm={voidSale}
+          onClose={()=>setCancelSale(null)}
+        />
+      )}
     </div>
   );
 }
@@ -2242,13 +3770,17 @@ function Pengguna({ currentUser, showToast, isMobile }) {
   const [loadErr, setLoadErr] = useState("");
   const [modal, setModal] = useState(null);
   const [createModal, setCreateModal] = useState(false);
+  const [deactivateUser, setDeactivateUser] = useState(null);
+  const [deleteUser, setDeleteUser] = useState(null);
+  const [actionBusy, setActionBusy] = useState("");
 
   const loadUsers = async () => {
     setLoadErr("");
     const { data: rows, error } = await supabase
       .from("profiles")
-      .select("id, full_name, email, role, created_at, updated_at")
+      .select("id, full_name, email, role, is_active, deactivated_at, deactivation_reason, created_at, updated_at")
       .order("created_at", { ascending: true });
+
     if (error) setLoadErr(error.message);
     else setUsers(rows || []);
   };
@@ -2257,27 +3789,53 @@ function Pengguna({ currentUser, showToast, isMobile }) {
     loadUsers();
     const channel = supabase
       .channel("profiles-admin-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, loadUsers)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "profiles" },
+        loadUsers,
+      )
       .subscribe();
+
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  const createEmployee = async (f) => {
-    const { data, error } = await supabase.functions.invoke("admin-users", {
-      body: {
-        action: "create",
-        email: f.email.trim().toLowerCase(),
-        password: f.password,
-        full_name: f.full_name.trim(),
-      },
-    });
+  const invokeAdminUsers = async (body) => {
+    const { data, error } = await supabase.functions.invoke("admin-users", { body });
 
     if (error) {
-      showToast("Gagal membuat akun: " + error.message, "warn");
-      return false;
+      let message = error.message || "Permintaan server gagal.";
+      try {
+        if (error.context?.json) {
+          const payload = await error.context.json();
+          if (payload?.error) message = payload.error;
+        }
+      } catch {
+        // Keep original functions error.
+      }
+      return { ok: false, error: message };
     }
+
     if (!data?.ok) {
-      showToast("Gagal membuat akun: " + (data?.error || "Respons server tidak valid"), "warn");
+      return {
+        ok: false,
+        error: data?.error || "Respons server tidak valid",
+        usage: data?.usage,
+      };
+    }
+
+    return data;
+  };
+
+  const createEmployee = async (f) => {
+    const result = await invokeAdminUsers({
+      action: "create",
+      email: f.email.trim().toLowerCase(),
+      password: f.password,
+      full_name: f.full_name.trim(),
+    });
+
+    if (!result.ok) {
+      showToast("Gagal membuat akun: " + result.error, "warn");
       return false;
     }
 
@@ -2289,15 +3847,16 @@ function Pengguna({ currentUser, showToast, isMobile }) {
 
   const save = async (u) => {
     const original = (users || []).find((x) => x.id === u.id);
+
     if (
       u.id !== currentUser.id &&
       original?.role === "cashier" &&
       u.role === "owner"
     ) {
       const confirmed = window.confirm(
-        `Jadikan ${u.full_name.trim() || "pengguna ini"} sebagai Pemilik? Akun ini akan mendapatkan akses penuh ke seluruh aplikasi.`
+        `Jadikan ${u.full_name.trim() || "pengguna ini"} sebagai Pemilik? Akun ini akan mendapatkan akses penuh ke seluruh aplikasi.`,
       );
-      if (!confirmed) return;
+      if (!confirmed) return false;
     }
 
     const payload = { full_name: u.full_name.trim() };
@@ -2307,93 +3866,378 @@ function Pengguna({ currentUser, showToast, isMobile }) {
       .from("profiles")
       .update(payload)
       .eq("id", u.id);
-    if (error) { showToast("Gagal menyimpan: " + error.message, "warn"); return; }
+
+    if (error) {
+      showToast("Gagal menyimpan: " + error.message, "warn");
+      return false;
+    }
+
     setModal(null);
     showToast("Pengguna tersimpan.");
     await loadUsers();
+    return true;
+  };
+
+  const setUserActive = async (user, active, reason = "") => {
+    if (!user || user.id === currentUser.id) return false;
+    const key = `${active ? "enable" : "disable"}-${user.id}`;
+    setActionBusy(key);
+
+    const result = await invokeAdminUsers({
+      action: "set_active",
+      user_id: user.id,
+      active,
+      reason,
+    });
+
+    setActionBusy("");
+
+    if (!result.ok) {
+      showToast(
+        `${active ? "Gagal mengaktifkan" : "Gagal menonaktifkan"} akun: ${result.error}`,
+        "warn",
+      );
+      return false;
+    }
+
+    showToast(
+      active
+        ? `Akun ${user.full_name} diaktifkan kembali.`
+        : `Akun ${user.full_name} dinonaktifkan.`,
+    );
+    await loadUsers();
+    return true;
+  };
+
+  const hardDeleteUser = async (user) => {
+    if (!user || user.id === currentUser.id) return false;
+    setActionBusy(`delete-${user.id}`);
+
+    const result = await invokeAdminUsers({
+      action: "delete",
+      user_id: user.id,
+    });
+
+    setActionBusy("");
+
+    if (!result.ok) {
+      showToast("Akun tidak dapat dihapus: " + result.error, "warn");
+      return false;
+    }
+
+    showToast(`Akun ${user.full_name} dihapus permanen.`);
+    setDeleteUser(null);
+    await loadUsers();
+    return true;
+  };
+
+  const activeUsers = users ? users.filter((u) => u.is_active !== false) : [];
+  const inactiveUsers = users ? users.filter((u) => u.is_active === false) : [];
+  const activeOwners = users
+    ? users.filter((u) => u.role === "owner" && u.is_active !== false)
+    : [];
+
+  const UserActions = ({ u, mobile = false }) => {
+    const isSelf = u.id === currentUser.id;
+    const busy =
+      actionBusy === `enable-${u.id}` ||
+      actionBusy === `disable-${u.id}` ||
+      actionBusy === `delete-${u.id}`;
+
+    if (isSelf) {
+      return (
+        <Btn
+          variant="outline"
+          onClick={() => setModal(u)}
+          style={mobile ? { minHeight: 34 } : { minHeight: 30, padding: "5px 8px" }}
+        >
+          <Pencil size={12}/> Edit Profil
+        </Btn>
+      );
+    }
+
+    return (
+      <div className={mobile ? "user-action-stack" : "row-actions"}>
+        <Btn
+          variant="outline"
+          disabled={busy}
+          onClick={() => setModal(u)}
+          style={mobile ? { minHeight: 34 } : { minHeight: 30, padding: "5px 8px" }}
+        >
+          <Pencil size={12}/> Edit
+        </Btn>
+
+        {u.is_active === false ? (
+          <>
+            <Btn
+              disabled={busy}
+              onClick={() => setUserActive(u, true)}
+              style={mobile ? { minHeight: 34 } : { minHeight: 30, padding: "5px 8px" }}
+            >
+              Aktifkan
+            </Btn>
+
+            {u.role === "cashier" && (
+              <Btn
+                variant="danger"
+                disabled={busy}
+                onClick={() => setDeleteUser(u)}
+                style={mobile ? { minHeight: 34 } : { minHeight: 30, padding: "5px 8px" }}
+              >
+                Hapus
+              </Btn>
+            )}
+          </>
+        ) : (
+          <Btn
+            variant="outline"
+            disabled={busy || (u.role === "owner" && activeOwners.length <= 1)}
+            title={
+              u.role === "owner" && activeOwners.length <= 1
+                ? "Pemilik aktif terakhir tidak dapat dinonaktifkan"
+                : "Nonaktifkan akun"
+            }
+            onClick={() => setDeactivateUser(u)}
+            style={mobile ? { minHeight: 34 } : { minHeight: 30, padding: "5px 8px" }}
+          >
+            Nonaktifkan
+          </Btn>
+        )}
+      </div>
+    );
   };
 
   return (
     <div>
       <PageTitle
         title="Pengguna & Hak Akses"
-        subtitle="Kelola akun pemilik dan karyawan"
-        right={<Btn onClick={() => setCreateModal(true)}><Plus size={15} /> Tambah Karyawan</Btn>}
+        subtitle="Kelola akun, status akses, dan keamanan pengguna"
+        right={
+          <Btn onClick={() => setCreateModal(true)}>
+            <Plus size={15}/> Tambah Karyawan
+          </Btn>
+        }
       />
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="user-summary-grid">
         <Card>
-          <div style={{ fontSize: 12, color: "#64748B" }}>Total Pengguna</div>
-          <div style={{ fontSize: 20, fontWeight: 700 }}>{users?.length ?? "-"}</div>
+          <div className="summary-label">Total Pengguna</div>
+          <div className="summary-value">{users?.length ?? "-"}</div>
         </Card>
         <Card>
-          <div style={{ fontSize: 12, color: "#64748B" }}>Pemilik</div>
-          <div style={{ fontSize: 20, fontWeight: 700 }}>{users ? users.filter((u) => u.role === "owner").length : "-"}</div>
+          <div className="summary-label">Aktif</div>
+          <div className="summary-value">{users ? activeUsers.length : "-"}</div>
         </Card>
         <Card>
-          <div style={{ fontSize: 12, color: "#64748B" }}>Karyawan</div>
-          <div style={{ fontSize: 20, fontWeight: 700 }}>{users ? users.filter((u) => u.role === "cashier").length : "-"}</div>
+          <div className="summary-label">Nonaktif</div>
+          <div className="summary-value">{users ? inactiveUsers.length : "-"}</div>
+        </Card>
+        <Card>
+          <div className="summary-label">Pemilik Aktif</div>
+          <div className="summary-value">{users ? activeOwners.length : "-"}</div>
         </Card>
       </div>
 
       {isMobile ? (
         <div className="mobile-card-list">
-          {loadErr && <div style={{ fontSize: 11.5, color: "#B91C1C", padding:10, borderRadius:10, background:"#FFF1F2" }}>Gagal memuat pengguna: {loadErr}</div>}
+          {loadErr && (
+            <div className="inline-error">
+              Gagal memuat pengguna: {loadErr}
+            </div>
+          )}
           {users === null && !loadErr && <Empty text="Memuat…"/>}
           {users && users.length === 0 && <Empty text="Belum ada pengguna."/>}
-          {(users || []).map((u)=>(
-            <div className="user-mobile-card" key={u.id}>
-              <div className="user-mobile-head">
-                <div className="user-mobile-avatar">{(u.full_name || "U").trim().slice(0,1).toUpperCase()}</div>
-                <div className="mobile-card-title">
-                  <b>{u.full_name}{u.id === currentUser.id ? " (Anda)" : ""}</b>
-                  <span>{u.email || "-"}</span>
+
+          {(users || []).map((u) => {
+            const inactive = u.is_active === false;
+            return (
+              <div
+                className={`user-mobile-card ${inactive ? "is-user-inactive" : ""}`}
+                key={u.id}
+              >
+                <div className="user-mobile-head">
+                  <div className="user-mobile-avatar">
+                    {(u.full_name || "U").trim().slice(0,1).toUpperCase()}
+                  </div>
+
+                  <div className="mobile-card-title">
+                    <b>
+                      {u.full_name}
+                      {u.id === currentUser.id ? " (Anda)" : ""}
+                    </b>
+                    <span>{u.email || "-"}</span>
+                  </div>
+
+                  <Badge tone={inactive ? "slate" : "green"}>
+                    {inactive ? "Nonaktif" : "Aktif"}
+                  </Badge>
                 </div>
-                <Badge tone={u.role === "owner" ? "blue" : "slate"}>{u.role === "owner" ? "Pemilik" : "Karyawan"}</Badge>
+
+                <div className="user-role-row">
+                  <Badge tone={u.role === "owner" ? "blue" : "slate"}>
+                    {u.role === "owner" ? "Pemilik" : "Karyawan"}
+                  </Badge>
+                  {inactive && u.deactivated_at && (
+                    <span>Sejak {formatDate(u.deactivated_at)}</span>
+                  )}
+                </div>
+
+                <div className="mobile-card-meta">
+                  <div>
+                    <span>Bergabung</span>
+                    <b>{u.created_at ? formatDate(u.created_at) : "-"}</b>
+                  </div>
+                  <div>
+                    <span>Hak Akses</span>
+                    <b>
+                      {inactive
+                        ? "Tidak dapat login"
+                        : u.role === "owner"
+                          ? "Penuh"
+                          : "Operasional"}
+                    </b>
+                  </div>
+                </div>
+
+                {inactive && u.deactivation_reason && (
+                  <div className="user-deactivation-reason">
+                    Alasan nonaktif: {u.deactivation_reason}
+                  </div>
+                )}
+
+                <div className="mobile-card-actions">
+                  <UserActions u={u} mobile/>
+                </div>
               </div>
-              <div className="mobile-card-meta">
-                <div><span>Bergabung</span><b>{u.created_at ? formatDate(u.created_at) : "-"}</b></div>
-                <div><span>Hak Akses</span><b>{u.role === "owner" ? "Penuh" : "Operasional"}</b></div>
-              </div>
-              <div className="mobile-card-actions">
-                <Btn variant="outline" onClick={()=>setModal(u)} style={{minHeight:32,padding:"6px 10px"}}><Pencil size={12}/> Edit Pengguna</Btn>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
-        <Card>
-          {loadErr && <div style={{ fontSize: 12.5, color: "#B91C1C", marginBottom: 10 }}>Gagal memuat pengguna: {loadErr}</div>}
+        <Card style={{ padding: 0, overflow: "hidden" }}>
+          {loadErr && (
+            <div className="inline-error" style={{margin:14}}>
+              Gagal memuat pengguna: {loadErr}
+            </div>
+          )}
+
           <div style={{ overflowX: "auto" }}>
             <table>
-              <thead><tr style={{ textAlign: "left", fontSize: 11.5, color: "#64748B", textTransform: "uppercase" }}>
-                <th style={th}>Nama</th><th style={th}>Email</th><th style={th}>Peran</th><th style={th}>Bergabung</th><th style={th} className="actions">Aksi</th>
-              </tr></thead>
+              <thead>
+                <tr style={{ textAlign:"left", fontSize:11.5, color:"#64748B", textTransform:"uppercase" }}>
+                  <th style={th}>Pengguna</th>
+                  <th style={th}>Peran</th>
+                  <th style={th}>Status</th>
+                  <th style={th}>Bergabung</th>
+                  <th style={th} className="actions">Aksi</th>
+                </tr>
+              </thead>
               <tbody>
-                {(users || []).map((u) => (
-                  <tr key={u.id} style={{ borderTop: "1px solid #F1F5F9", fontSize: 13 }}>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}><div style={{ fontWeight: 600 }}>{u.full_name}{u.id === currentUser.id && <span style={{ color: "#94A3B8", fontSize: 11 }}> (Anda)</span>}</div></td>
-                    <td style={{ ...td, maxWidth:280, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", color:"#64748B" }} title={u.email || "-"}>{u.email || "-"}</td>
-                    <td style={td}><Badge tone={u.role === "owner" ? "blue" : "slate"}>{u.role === "owner" ? "Pemilik" : "Karyawan"}</Badge></td>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{u.created_at ? formatDate(u.created_at) : "-"}</td>
-                    <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }} className="actions"><button onClick={() => setModal(u)} title="Edit pengguna" style={iconBtn}><Pencil size={14} /></button></td>
-                  </tr>
-                ))}
+                {(users || []).map((u) => {
+                  const inactive = u.is_active === false;
+                  return (
+                    <tr
+                      key={u.id}
+                      className={inactive ? "is-user-inactive" : ""}
+                      style={{fontSize:12.5}}
+                    >
+                      <td style={td}>
+                        <div style={{fontWeight:700}}>
+                          {u.full_name}
+                          {u.id === currentUser.id && (
+                            <span style={{color:"#94A3B8",fontSize:10.5}}> (Anda)</span>
+                          )}
+                        </div>
+                        <div
+                          style={{
+                            marginTop:3,
+                            maxWidth:280,
+                            whiteSpace:"nowrap",
+                            overflow:"hidden",
+                            textOverflow:"ellipsis",
+                            color:"#8A97A9",
+                            fontSize:10.5,
+                          }}
+                          title={u.email || "-"}
+                        >
+                          {u.email || "-"}
+                        </div>
+                      </td>
+
+                      <td style={td}>
+                        <Badge tone={u.role === "owner" ? "blue" : "slate"}>
+                          {u.role === "owner" ? "Pemilik" : "Karyawan"}
+                        </Badge>
+                      </td>
+
+                      <td style={td}>
+                        <Badge tone={inactive ? "slate" : "green"}>
+                          {inactive ? "Nonaktif" : "Aktif"}
+                        </Badge>
+                        {inactive && u.deactivated_at && (
+                          <div style={{marginTop:4,fontSize:9.5,color:"#94A3B8"}}>
+                            {formatDate(u.deactivated_at)}
+                          </div>
+                        )}
+                      </td>
+
+                      <td style={{...td,whiteSpace:"nowrap"}}>
+                        {u.created_at ? formatDate(u.created_at) : "-"}
+                      </td>
+
+                      <td style={td} className="actions">
+                        <UserActions u={u}/>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
-          {users === null && !loadErr && <Empty text="Memuat…" />}
-          {users && users.length === 0 && <Empty text="Belum ada pengguna." />}
+
+          {users === null && !loadErr && <Empty text="Memuat…"/>}
+          {users && users.length === 0 && <Empty text="Belum ada pengguna."/>}
         </Card>
       )}
 
       <div className="access-info-card">
-        <b>Pemilik</b> memiliki akses penuh. <b>Karyawan</b> dapat menggunakan Dashboard, Kasir, melihat Produk & Stok, serta PPOB.
-        Menu manajemen dan perubahan stok/produk tetap dilindungi oleh hak akses database (RLS).
+        <b>Nonaktifkan</b> untuk karyawan yang sudah tidak bekerja agar riwayat transaksi tetap tersimpan.
+        <b> Hapus permanen</b> hanya tersedia untuk akun Karyawan yang sudah nonaktif dan belum pernah digunakan dalam transaksi operasional.
       </div>
 
-      {createModal && <CreateEmployeeModal onSave={createEmployee} onClose={() => setCreateModal(false)} />}
-      {modal && <UserModal user={modal} isSelf={modal.id === currentUser.id} onSave={save} onClose={() => setModal(null)} />}
+      {createModal && (
+        <CreateEmployeeModal
+          onSave={createEmployee}
+          onClose={() => setCreateModal(false)}
+        />
+      )}
+
+      {modal && (
+        <UserModal
+          user={modal}
+          isSelf={modal.id === currentUser.id}
+          onSave={save}
+          onClose={() => setModal(null)}
+        />
+      )}
+
+      {deactivateUser && (
+        <ReasonModal
+          title="Nonaktifkan Pengguna"
+          description={`Nonaktifkan akun ${deactivateUser.full_name}? Akun tidak dapat login atau melakukan transaksi, tetapi seluruh riwayat tetap tersimpan.`}
+          confirmLabel="Nonaktifkan Akun"
+          onConfirm={(reason) => setUserActive(deactivateUser, false, reason)}
+          onClose={() => setDeactivateUser(null)}
+        />
+      )}
+
+      {deleteUser && (
+        <DeleteUserModal
+          user={deleteUser}
+          busy={actionBusy === `delete-${deleteUser.id}`}
+          onDelete={hardDeleteUser}
+          onClose={() => setDeleteUser(null)}
+        />
+      )}
     </div>
   );
 }
@@ -2440,6 +4284,55 @@ function UserModal({ user, isSelf, onSave, onClose }) {
         </Field>
         {isSelf && <div style={{ fontSize: 12, color: "#64748B" }}>Peran akun Anda sendiri tidak dapat diubah dari form ini untuk mencegah kehilangan akses pemilik.</div>}
         <Btn disabled={!f.full_name.trim()} onClick={() => onSave(f)} style={{ justifyContent: "center" }}>Simpan</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+
+function DeleteUserModal({ user, busy, onDelete, onClose }) {
+  const [confirmText, setConfirmText] = useState("");
+  const ready = confirmText.trim().toUpperCase() === "HAPUS";
+
+  return (
+    <Modal title="Hapus Pengguna Permanen" onClose={onClose} width={420}>
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <div className="danger-zone-box">
+          <AlertTriangle size={17}/>
+          <div>
+            <b>Ini tindakan permanen.</b>
+            <span>
+              Akun <strong>{user.full_name}</strong> hanya akan dihapus jika belum memiliki riwayat penjualan, stok, PPOB, keuangan, atau piutang.
+            </span>
+          </div>
+        </div>
+
+        <div style={{fontSize:11.5,color:"#66758A",lineHeight:1.6}}>
+          Jika akun pernah dipakai, sistem akan menolak penghapusan dan akun harus tetap disimpan dalam status <b>Nonaktif</b>.
+        </div>
+
+        <Field label='Ketik "HAPUS" untuk konfirmasi'>
+          <Input
+            autoFocus
+            value={confirmText}
+            onChange={(e)=>setConfirmText(e.target.value)}
+            placeholder="HAPUS"
+          />
+        </Field>
+
+        <div style={{display:"flex",gap:8}}>
+          <Btn variant="outline" onClick={onClose} style={{flex:1}}>
+            Kembali
+          </Btn>
+          <Btn
+            variant="danger"
+            disabled={!ready || busy}
+            onClick={()=>onDelete(user)}
+            style={{flex:1}}
+          >
+            {busy ? "Menghapus…" : "Hapus Permanen"}
+          </Btn>
+        </div>
       </div>
     </Modal>
   );
