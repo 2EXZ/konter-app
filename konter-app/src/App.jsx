@@ -31,7 +31,15 @@ const THEME = {
 // ---------- helpers ----------
 const rupiah = (n) =>
   "Rp" + Math.round(n || 0).toLocaleString("id-ID");
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const STORE = {
+  name: import.meta.env.VITE_STORE_NAME || "Dhell Cell",
+  phone: import.meta.env.VITE_STORE_PHONE || "",
+  address: import.meta.env.VITE_STORE_ADDRESS || "",
+};
+
+const isBrowserOnline = () =>
+  typeof navigator === "undefined" ? true : navigator.onLine;
+
 const localDateKey = (value = new Date()) => {
   const d = value instanceof Date ? value : new Date(value);
   return [
@@ -65,25 +73,6 @@ const CATEGORY_LABEL = {
   hp: "Handphone / Unit",
 };
 
-const seedData = () => ({
-  products: [
-    { id: uid(), name: "Charger Type-C 25W", category: "aksesoris", sku: "AKS-001", price: 45000, cost: 28000, stock: 24, minStock: 5, supplier: "CV Sumber Jaya" },
-    { id: uid(), name: "Kabel Data Micro USB", category: "aksesoris", sku: "AKS-002", price: 20000, cost: 12000, stock: 3, minStock: 5, supplier: "CV Sumber Jaya" },
-    { id: uid(), name: "Headset Bluetooth TWS", category: "aksesoris", sku: "AKS-003", price: 85000, cost: 55000, stock: 10, minStock: 3, supplier: "Toko Aksesoris Pusat" },
-    { id: uid(), name: "Tempered Glass Universal", category: "aksesoris", sku: "AKS-004", price: 15000, cost: 7000, stock: 40, minStock: 10, supplier: "Toko Aksesoris Pusat" },
-    { id: uid(), name: "Kartu Perdana Telkomsel", category: "perdana", sku: "SIM-TSEL", price: 15000, cost: 8000, stock: 12, minStock: 5, supplier: "Distributor Telkomsel", serial: "TSEL-0001..0012" },
-    { id: uid(), name: "Kartu Perdana XL", category: "perdana", sku: "SIM-XL", price: 12000, cost: 6000, stock: 2, minStock: 5, supplier: "Distributor XL", serial: "XL-0001..0002" },
-    { id: uid(), name: "Pulsa Rp 20.000 (All Operator)", category: "pulsa", sku: "PLS-20", price: 21000, cost: 19500, stock: 999, minStock: 0, supplier: "Digiflazz" },
-    { id: uid(), name: "Pulsa Rp 50.000 (All Operator)", category: "pulsa", sku: "PLS-50", price: 51500, cost: 49500, stock: 999, minStock: 0, supplier: "Digiflazz" },
-  ],
-  sales: [],
-  financeTx: [],
-  debts: [],
-  ppobTx: [],
-  stockLog: [],
-  storeName: "Dhell Cell",
-});
-
 const useIsMobile = (breakpoint = 860) => {
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth < breakpoint : false
@@ -94,6 +83,23 @@ const useIsMobile = (breakpoint = 860) => {
     return () => window.removeEventListener("resize", onResize);
   }, [breakpoint]);
   return isMobile;
+};
+
+const useOnlineStatus = () => {
+  const [online, setOnline] = useState(() => isBrowserOnline());
+
+  useEffect(() => {
+    const onOnline = () => setOnline(true);
+    const onOffline = () => setOnline(false);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, []);
+
+  return online;
 };
 
 const NAV = [
@@ -107,36 +113,16 @@ const NAV = [
 ];
 
 export default function App() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [page, setPage] = useState("dashboard");
   const [toast, setToast] = useState(null);
   const isMobile = useIsMobile();
+  const isOnline = useOnlineStatus();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // Data operasional (produk/kasir/keuangan/dll) — SEMENTARA masih localStorage
-  // (bukan Supabase) sambil menunggu Tahap 2/3 migrasi tabel products/sales/dst.
-  // Sebelumnya kode ini memakai `window.storage`, API yang hanya ada di sandbox
-  // artifact Claude.ai dan TIDAK ADA di browser sungguhan — itu sebabnya data
-  // selalu reset ke seed setiap refresh saat sudah di-deploy. localStorage di
-  // sini hanya menyelesaikan "hilang saat refresh di 1 device", BUKAN sinkron
-  // multi-device (itu baru selesai setelah data pindah ke Supabase).
-  const STORAGE_KEY = "konter-app-data";
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) setData(JSON.parse(raw));
-      else {
-        const seed = seedData();
-        setData(seed);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(seed));
-      }
-    } catch (e) {
-      setData(seedData());
-    }
-    setLoading(false);
+    document.title = `${STORE.name} POS`;
   }, []);
 
   // ===== SUPABASE AUTH SESSION =====
@@ -222,18 +208,13 @@ export default function App() {
     if (!allowed) setPage("dashboard");
   }, [currentUser?.role, page]);
 
-  const persist = async (next) => {
-    setData(next);
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); }
-    catch (e) { showToast("Gagal menyimpan data ke penyimpanan lokal.", "warn"); }
-  };
 
   const showToast = (msg, type = "ok") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   };
 
-  if (loading || authLoading || !data) {
+  if (authLoading) {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: THEME.canvas, fontFamily: "Inter, ui-sans-serif, sans-serif", color: THEME.text }}>
         Memuat aplikasi…
@@ -245,7 +226,7 @@ export default function App() {
     return (
       <>
         <style>{globalCss}</style>
-        <LoginScreen storeName={data.storeName} />
+        <LoginScreen storeName={STORE.name} />
       </>
     );
   }
@@ -276,15 +257,18 @@ export default function App() {
       <div className="brand-block">
         <div className="brand-mark"><Store size={20} /></div>
         <div className="brand-copy">
-          <div className="brand-name">{data.storeName}</div>
+          <div className="brand-name">{STORE.name}</div>
           <div className="brand-sub">Sistem Kasir</div>
         </div>
         {isMobile && <button className="icon-ghost-dark" onClick={() => setDrawerOpen(false)}><X size={17} /></button>}
       </div>
 
-      <div className="sidebar-status">
-        <span className="live-dot" />
-        <div><b>Cloud aktif</b><small>Realtime tersambung</small></div>
+      <div className={isOnline ? "sidebar-status" : "sidebar-status offline"}>
+        {isOnline ? <Wifi size={14}/> : <WifiOff size={14}/>}
+        <div>
+          <b>{isOnline ? "Online" : "Offline"}</b>
+          <small>{isOnline ? "Cloud & realtime aktif" : "Transaksi dihentikan"}</small>
+        </div>
       </div>
 
       <nav className="sidebar-nav">
@@ -316,7 +300,7 @@ export default function App() {
           <button className="mobile-menu-btn" onClick={() => setDrawerOpen(true)} aria-label="Buka menu">
             <span /><span /><span />
           </button>
-          <div className="mobile-brand"><div className="brand-mark small"><Store size={16} /></div><b>{data.storeName}</b></div>
+          <div className="mobile-brand"><div className="brand-mark small"><Store size={16} /></div><b>{STORE.name}</b></div>
           <div className="mobile-avatar">{(currentUser.name || "U").trim().slice(0,1).toUpperCase()}</div>
         </header>
       )}
@@ -338,7 +322,10 @@ export default function App() {
               <b>{activeNav?.label || "Dashboard"}</b>
             </div>
             <div className="workspace-right">
-              <div className="live-pill"><span className="live-dot" /> Sinkron</div>
+              <div className={isOnline ? "live-pill" : "live-pill offline"}>
+                {isOnline ? <Wifi size={13}/> : <WifiOff size={13}/>}
+                {isOnline ? "Online" : "Offline"}
+              </div>
               <div className="date-pill">
                 {new Date().toLocaleDateString("id-ID", { weekday: "short", day: "2-digit", month: "short" })}
               </div>
@@ -351,8 +338,17 @@ export default function App() {
         )}
 
         <main className="workspace-content">
+          {!isOnline && (
+            <div className="offline-banner">
+              <WifiOff size={16}/>
+              <div>
+                <b>Tidak ada koneksi internet.</b>
+                <span>Jangan lanjutkan transaksi sampai status kembali Online.</span>
+              </div>
+            </div>
+          )}
           {page === "dashboard" && <Dashboard setPage={setPage} isMobile={isMobile} showToast={showToast} currentUser={currentUser} />}
-          {page === "kasir" && <Kasir showToast={showToast} currentUser={currentUser} storeName={data.storeName} isMobile={isMobile} />}
+          {page === "kasir" && <Kasir showToast={showToast} currentUser={currentUser} storeInfo={STORE} isMobile={isMobile} />}
           {page === "produk" && <Produk role={currentUser.role} showToast={showToast} isMobile={isMobile} />}
           {page === "ppob" && <Ppob showToast={showToast} currentUser={currentUser} isMobile={isMobile} />}
           {page === "keuangan" && <Keuangan showToast={showToast} isMobile={isMobile} currentUser={currentUser} />}
@@ -1638,6 +1634,373 @@ const globalCss = `
     }
   }
 
+
+  /* ---------- Production connectivity ---------- */
+  .sidebar-status.offline {
+    border-color:rgba(251,113,133,.28);
+    background:rgba(190,18,60,.12);
+    color:#FFD7E0;
+  }
+  .sidebar-status.offline small { color:#EBA4B5; }
+  .live-pill.offline {
+    color:#B42345;
+    border-color:#F5CAD4;
+    background:#FFF1F4;
+  }
+  .offline-banner {
+    display:flex;
+    align-items:flex-start;
+    gap:10px;
+    padding:11px 13px;
+    margin-bottom:14px;
+    border:1px solid #F4C9A8;
+    border-radius:12px;
+    background:#FFF7ED;
+    color:#9A4D0C;
+  }
+  .offline-banner svg { flex-shrink:0; margin-top:1px; }
+  .offline-banner b {
+    display:block;
+    font-size:11.5px;
+  }
+  .offline-banner span {
+    display:block;
+    margin-top:2px;
+    color:#A7662D;
+    font-size:10.5px;
+    line-height:1.45;
+  }
+
+  @media (max-width: 860px) {
+    .offline-banner {
+      padding:12px 13px;
+      margin-bottom:13px;
+    }
+    .offline-banner b { font-size:12.5px; }
+    .offline-banner span { font-size:11.5px; }
+  }
+
+
+  /* =========================================================
+     MOBILE PRECISION FINAL — Production v1.0 Candidate
+     Fokus: baseline teks, wrapping, spacing, touch target
+     ========================================================= */
+
+  .metric-copy {
+    min-width:0;
+    flex:1;
+    text-align:left;
+  }
+  .metric-copy span,
+  .metric-copy b {
+    display:block;
+    text-align:left;
+  }
+
+  @media (max-width: 860px) {
+    /* Dashboard hero */
+    .dashboard-hero {
+      padding:20px 16px !important;
+      gap:16px !important;
+      border-radius:18px !important;
+    }
+    .dashboard-hero > div:first-child {
+      text-align:center;
+    }
+    .hero-kicker {
+      font-size:10.5px !important;
+      line-height:1.25 !important;
+      letter-spacing:.16em !important;
+    }
+    .hero-main-value {
+      margin-top:8px !important;
+      font-size:34px !important;
+      line-height:1.05 !important;
+      letter-spacing:-.045em !important;
+    }
+    .hero-sub {
+      margin-top:7px !important;
+      font-size:12.5px !important;
+      line-height:1.45 !important;
+    }
+
+    /* Exactly 2 actions on first row; owner report button spans full width */
+    .hero-actions {
+      display:grid !important;
+      grid-template-columns:repeat(2,minmax(0,1fr)) !important;
+      gap:8px !important;
+      margin-top:20px !important;
+    }
+    .hero-action {
+      width:100% !important;
+      min-width:0 !important;
+      height:44px !important;
+      padding:0 10px !important;
+      justify-content:center !important;
+      border-radius:11px !important;
+      font-size:12px !important;
+      line-height:1.1 !important;
+      white-space:nowrap !important;
+    }
+    .hero-actions > .hero-action:nth-child(3) {
+      grid-column:1 / -1;
+    }
+
+    /* Four hero mini KPIs use one visual baseline */
+    .hero-side {
+      grid-template-columns:repeat(2,minmax(0,1fr)) !important;
+      gap:9px !important;
+    }
+    .hero-mini {
+      min-width:0 !important;
+      min-height:96px !important;
+      padding:13px 12px !important;
+      align-items:center !important;
+      justify-content:center !important;
+      text-align:center !important;
+      border-radius:14px !important;
+    }
+    .hero-mini span {
+      min-height:17px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:11px !important;
+      line-height:1.35 !important;
+      white-space:nowrap;
+    }
+    .hero-mini b {
+      display:block;
+      margin-top:7px !important;
+      font-size:18px !important;
+      line-height:1.15 !important;
+      font-variant-numeric:tabular-nums;
+    }
+
+    /* Supporting KPI cards: icon | copy, both text lines share the same left edge */
+    .metric-strip {
+      grid-template-columns:1fr !important;
+      gap:10px !important;
+      margin:14px 0 !important;
+    }
+    .metric-tile {
+      display:grid !important;
+      grid-template-columns:46px minmax(0,1fr) !important;
+      align-items:center !important;
+      column-gap:13px !important;
+      min-height:94px !important;
+      padding:14px 16px !important;
+      border-radius:16px !important;
+    }
+    .metric-icon {
+      width:46px !important;
+      height:46px !important;
+      border-radius:13px !important;
+      align-self:center !important;
+    }
+    .metric-copy {
+      min-width:0 !important;
+      width:100% !important;
+      text-align:left !important;
+    }
+    .metric-copy span {
+      margin:0 !important;
+      font-size:12.5px !important;
+      line-height:1.4 !important;
+      color:#7B899E !important;
+      white-space:normal !important;
+    }
+    .metric-copy b {
+      margin-top:5px !important;
+      font-size:18px !important;
+      line-height:1.15 !important;
+      color:#111827 !important;
+      font-variant-numeric:tabular-nums;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+
+    /* Card headings: never let right-side actions collapse into 2 lines */
+    .panel-heading {
+      width:100%;
+      min-width:0;
+    }
+    .panel-heading > div:first-child {
+      min-width:0;
+      flex:1;
+    }
+    .panel-heading > button,
+    .panel-heading > .ui-btn-primary,
+    .panel-heading > .ui-btn-outline,
+    .panel-heading > .ui-btn-ghost,
+    .panel-heading > .ui-btn-danger {
+      flex:0 0 auto !important;
+      width:auto !important;
+      white-space:nowrap !important;
+    }
+    .dashboard-panel-heading {
+      display:grid !important;
+      grid-template-columns:minmax(0,1fr) auto !important;
+      align-items:start !important;
+      column-gap:10px !important;
+    }
+    .dashboard-panel-heading .ui-btn-ghost {
+      min-height:34px !important;
+      height:34px !important;
+      padding:5px 7px !important;
+      font-size:11.5px !important;
+      border-radius:9px !important;
+      white-space:nowrap !important;
+    }
+
+    /* Recent transaction list gets slightly more readable without becoming bulky */
+    .transaction-row {
+      min-height:72px !important;
+      padding:12px 0 !important;
+    }
+    .tx-product-copy b {
+      font-size:12.5px !important;
+      line-height:1.4 !important;
+    }
+    .tx-product-copy small {
+      font-size:10.5px !important;
+      line-height:1.35 !important;
+    }
+    .tx-meta-cell b,
+    .tx-time-cell b {
+      font-size:11.5px !important;
+    }
+    .tx-meta-cell span,
+    .tx-time-cell span {
+      font-size:10.5px !important;
+    }
+    .tx-value {
+      font-size:12.5px !important;
+    }
+
+    /* Stock panel */
+    .stock-name,
+    .stock-count {
+      font-size:11.5px !important;
+    }
+
+    /* Kasir */
+    .pos-toolbar {
+      padding:14px !important;
+    }
+    .product-grid-v2 {
+      padding:11px !important;
+      gap:9px !important;
+    }
+    .product-card-v2 {
+      min-height:145px !important;
+      padding:12px !important;
+    }
+    .product-name-v2 {
+      font-size:13px !important;
+      line-height:1.4 !important;
+    }
+    .product-price-v2 {
+      font-size:14.5px !important;
+      line-height:1.2 !important;
+    }
+    .stock-pill {
+      font-size:10px !important;
+    }
+    .cart-head b {
+      font-size:15px !important;
+    }
+    .cart-head span {
+      font-size:11.5px !important;
+    }
+    .cart-item-main b {
+      font-size:12.5px !important;
+    }
+    .cart-item-main span {
+      font-size:11px !important;
+    }
+
+    /* PPOB cards and total */
+    .service-grid-v2 {
+      gap:9px !important;
+    }
+    .service-card-v2 {
+      min-height:116px !important;
+      padding:14px !important;
+    }
+    .service-card-v2 b {
+      font-size:13.5px !important;
+      line-height:1.35 !important;
+    }
+
+    /* Keuangan / Piutang */
+    .finance-mobile-card,
+    .debt-mobile-card,
+    .sale-audit-mobile-card,
+    .inventory-mobile-card,
+    .stock-history-mobile-card,
+    .user-mobile-card {
+      text-align:left !important;
+    }
+    .money-value,
+    .sale-total {
+      font-variant-numeric:tabular-nums;
+    }
+
+    /* User cards */
+    .user-role-row {
+      align-items:center !important;
+    }
+
+    /* Bottom navigation */
+    .mobile-bottom-nav {
+      left:12px !important;
+      right:12px !important;
+      border-radius:20px !important;
+    }
+    .mobile-bottom-nav button {
+      padding:0 4px !important;
+      white-space:nowrap !important;
+    }
+  }
+
+  @media (max-width: 430px) {
+    .workspace-content {
+      padding-left:12px !important;
+      padding-right:12px !important;
+    }
+    .dashboard-hero {
+      padding-left:15px !important;
+      padding-right:15px !important;
+    }
+    .hero-action {
+      font-size:11.5px !important;
+    }
+    .dashboard-panel-heading {
+      grid-template-columns:minmax(0,1fr) auto !important;
+    }
+  }
+
+  @media (max-width: 360px) {
+    .hero-actions {
+      grid-template-columns:1fr !important;
+    }
+    .hero-actions > .hero-action:nth-child(3) {
+      grid-column:auto;
+    }
+    .hero-side {
+      grid-template-columns:1fr 1fr !important;
+    }
+    .dashboard-panel-heading {
+      grid-template-columns:1fr !important;
+      row-gap:7px !important;
+    }
+    .dashboard-panel-heading .ui-btn-ghost {
+      justify-self:start;
+    }
+  }
+
 `
 
 // ---------- shared UI bits ----------
@@ -1760,7 +2123,7 @@ function LoginScreen({ storeName }) {
 
         <div className="login-preview">
           <div className="login-preview-top">
-            <b>Dhell Cell • Ringkasan operasional</b>
+            <b>{storeName} • Ringkasan operasional</b>
             <span>Realtime</span>
           </div>
           <div className="login-preview-grid">
@@ -2012,14 +2375,38 @@ function Dashboard({ setPage, isMobile, showToast, currentUser }) {
       </section>
 
       <div className="metric-strip">
-        <div className="metric-tile"><div className="metric-icon"><TrendingUp size={17}/></div><div><span>Rata-rata nilai transaksi</span><b>{rupiah(salesToday.length ? omzetToday / salesToday.length : 0)}</b></div></div>
-        <div className="metric-tile"><div className="metric-icon" style={{ color:"#0F9F7A", background:"#ECFBF6" }}><Wallet size={17}/></div><div><span>Margin hari ini</span><b>{omzetToday ? `${Math.round((profitToday/omzetToday)*100)}%` : "0%"}</b></div></div>
-        <div className="metric-tile"><div className="metric-icon" style={{ color:"#B76A0C", background:"#FFF6E7" }}><AlertTriangle size={17}/></div><div><span>Perlu perhatian</span><b>{lowStock.length} produk</b></div></div>
+        <div className="metric-tile">
+          <div className="metric-icon"><TrendingUp size={17}/></div>
+          <div className="metric-copy">
+            <span>Rata-rata nilai transaksi</span>
+            <b>{rupiah(salesToday.length ? omzetToday / salesToday.length : 0)}</b>
+          </div>
+        </div>
+        <div className="metric-tile">
+          <div className="metric-icon" style={{ color:"#0F9F7A", background:"#ECFBF6" }}><Wallet size={17}/></div>
+          <div className="metric-copy">
+            <span>Margin hari ini</span>
+            <b>{omzetToday ? `${Math.round((profitToday/omzetToday)*100)}%` : "0%"}</b>
+          </div>
+        </div>
+        <div className="metric-tile">
+          <div className="metric-icon" style={{ color:"#B76A0C", background:"#FFF6E7" }}><AlertTriangle size={17}/></div>
+          <div className="metric-copy">
+            <span>Perlu perhatian</span>
+            <b>{lowStock.length} produk</b>
+          </div>
+        </div>
       </div>
 
       <div style={{ display:"grid", gridTemplateColumns:isMobile ? "1fr" : "minmax(0,1.35fr) minmax(300px,.65fr)", gap:14 }}>
         <Card>
-          <div className="panel-heading"><div><b>Transaksi terbaru</b><span style={{ display:"block", marginTop:3 }}>Riwayat penjualan terbaru dari seluruh perangkat</span></div><Btn variant="ghost" onClick={()=>setPage("kasir")}>Buka Kasir <ChevronRight size={13}/></Btn></div>
+          <div className="panel-heading dashboard-panel-heading">
+            <div>
+              <b>Transaksi terbaru</b>
+              <span style={{ display:"block", marginTop:3 }}>Riwayat penjualan terbaru dari seluruh perangkat</span>
+            </div>
+            <Btn variant="ghost" onClick={()=>setPage("kasir")}>Buka Kasir <ChevronRight size={13}/></Btn>
+          </div>
           {recentSales.length === 0 ? <Empty text="Belum ada transaksi penjualan."/> : <>
             <div className="activity-grid-head"><span>Produk</span><span>Kasir & metode</span><span>Waktu</span><span>Total</span></div>
             {recentSales.map((sale)=>{
@@ -2055,7 +2442,7 @@ function Dashboard({ setPage, isMobile, showToast, currentUser }) {
 const Empty = ({ text }) => <div style={{ fontSize: 13, color: "#94A3B8", padding: "18px 0", textAlign: "center" }}>{text}</div>;
 
 // ---------- Kasir (POS) ----------
-function Kasir({ showToast, currentUser, storeName, isMobile }) {
+function Kasir({ showToast, currentUser, storeInfo, isMobile }) {
   const [query, setQuery] = useState("");
   const [cat, setCat] = useState("semua");
   const [cart, setCart] = useState([]);
@@ -2084,6 +2471,10 @@ function Kasir({ showToast, currentUser, storeName, isMobile }) {
   const removeItem=(id)=>setCart((c)=>c.filter((x)=>x.productId!==id));
   const total=cart.reduce((a,x)=>a+x.price*x.qty,0);
   const checkout=async()=>{
+    if (!isBrowserOnline()) {
+      showToast("Tidak ada koneksi internet. Transaksi belum diproses.", "warn");
+      return;
+    }
     if(cart.length===0){showToast("Keranjang masih kosong.","warn");return;}
     const paid=payment==="cash"?Number(paidAmount):total;
     if(payment==="cash"&&(!Number.isFinite(paid)||paid<total)){showToast("Uang tunai kurang dari total belanja.","warn");return;}
@@ -2128,14 +2519,15 @@ function Kasir({ showToast, currentUser, storeName, isMobile }) {
           </div>
         </aside>
       </div>
-      {receipt && <ReceiptModal sale={receipt} storeName={storeName} onClose={()=>setReceipt(null)}/>} 
+      {receipt && <ReceiptModal sale={receipt} storeInfo={storeInfo} onClose={()=>setReceipt(null)}/>} 
     </div>
   );
 }
 const miniBtn = { width: 22, height: 22, borderRadius: 6, border: "1px solid #D8DCE3", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" };
 
-function ReceiptModal({ sale, storeName, onClose }) {
-  const text = `*${storeName}*\n${new Date(sale.date).toLocaleString("id-ID")}\nKasir: ${sale.cashier}\nPelanggan: ${sale.customer}\n\n` +
+function ReceiptModal({ sale, storeInfo, onClose }) {
+  const storeMeta = [storeInfo.address, storeInfo.phone].filter(Boolean).join("\n");
+  const text = `*${storeInfo.name}*\n${storeMeta ? `${storeMeta}\n` : ""}${formatDateTime(sale.date)}\nKasir: ${sale.cashier}\nPelanggan: ${sale.customer}\n\n` +
     sale.items.map((i) => `${i.name} x${i.qty} = ${rupiah(i.price * i.qty)}`).join("\n") +
     `\n\nInvoice: ${sale.invoiceNumber || sale.id}\nTOTAL: ${rupiah(sale.total)}\nMetode: ${paymentLabel(sale.payment)}${sale.payment === "cash" ? `\nTunai: ${rupiah(sale.paidAmount)}\nKembali: ${rupiah(sale.changeAmount)}` : ""}\n\nTerima kasih telah berbelanja!`;
   const waLink = "https://wa.me/?text=" + encodeURIComponent(text);
@@ -2201,6 +2593,10 @@ function Produk({ role, showToast, isMobile }) {
   const inventoryValue = (products || []).reduce((sum, p) => sum + (Number(p.cost || 0) * Number(p.stock || 0)), 0);
 
   const saveProduct = async (f) => {
+    if (!isBrowserOnline()) {
+      showToast("Tidak ada koneksi internet. Produk belum disimpan.", "warn");
+      return false;
+    }
     const payload = {
       name: f.name,
       category: f.category,
@@ -2216,11 +2612,11 @@ function Produk({ role, showToast, isMobile }) {
       // Edit: stok TIDAK ikut diubah di sini — perubahan stok harus lewat
       // tombol Barang Masuk/Keluar supaya selalu tercatat di stock_movements.
       const { error } = await supabase.from("products").update(payload).eq("id", f.id);
-      if (error) { showToast("Gagal menyimpan: " + error.message, "warn"); return; }
+      if (error) { showToast("Gagal menyimpan: " + error.message, "warn"); return false; }
     } else {
       const initialStock = Number(f.stock) || 0;
       const { data: inserted, error } = await supabase.from("products").insert(payload).select().single();
-      if (error) { showToast("Gagal menyimpan: " + error.message, "warn"); return; }
+      if (error) { showToast("Gagal menyimpan: " + error.message, "warn"); return false; }
       if (initialStock > 0) {
         const { error: rpcErr } = await supabase.rpc("adjust_stock", {
           p_product_id: inserted.id, p_direction: "in", p_movement_type: "purchase",
@@ -2232,6 +2628,7 @@ function Produk({ role, showToast, isMobile }) {
     setEditing(null);
     showToast("Produk tersimpan.");
     loadProducts(); loadLogs();
+    return true;
   };
 
   const deleteProduct = async (id) => {
@@ -2240,6 +2637,10 @@ function Produk({ role, showToast, isMobile }) {
       `Hapus ${product?.name || "produk ini"}? Produk hanya dapat dihapus jika belum memiliki riwayat stok/penjualan.`
     );
     if (!confirmed) return;
+    if (!isBrowserOnline()) {
+      showToast("Tidak ada koneksi internet. Produk belum dihapus.", "warn");
+      return;
+    }
 
     const { error } = await supabase.from("products").delete().eq("id", id);
     if (error) {
@@ -2256,6 +2657,10 @@ function Produk({ role, showToast, isMobile }) {
   };
 
   const doStockMove = async (product, mode, movementType, qty, note) => {
+    if (!isBrowserOnline()) {
+      showToast("Tidak ada koneksi internet. Stok belum diperbarui.", "warn");
+      return false;
+    }
     qty = Number(qty);
     if (!qty || qty <= 0) { showToast("Jumlah harus lebih dari 0.", "warn"); return; }
     const { error } = await supabase.rpc("adjust_stock", {
@@ -2273,9 +2678,9 @@ function Produk({ role, showToast, isMobile }) {
       <PageTitle title="Produk & Stok" subtitle="Kelola produk, stok, dan pergerakan barang" right={role==="owner"&&<Btn onClick={()=>setEditing("new")}><Plus size={14}/> Tambah Produk</Btn>} />
       {loadErr&&<div style={{ padding:"10px 12px",borderRadius:10,background:"#FFF1F2",color:"#BE123C",fontSize:11.5,marginBottom:12 }}>Gagal memuat: {loadErr}</div>}
       <div className="metric-strip" style={{ marginTop:0 }}>
-        <div className="metric-tile"><div className="metric-icon"><Package size={17}/></div><div><span>Total produk</span><b>{productCount}</b></div></div>
-        <div className="metric-tile"><div className="metric-icon" style={{color:"#B76A0C",background:"#FFF6E7"}}><AlertTriangle size={17}/></div><div><span>Stok menipis</span><b>{lowCount}</b></div></div>
-        <div className="metric-tile"><div className="metric-icon" style={{color:"#0F8B6D",background:"#E9FBF6"}}><Wallet size={17}/></div><div><span>Nilai Persediaan</span><b>{rupiah(inventoryValue)}</b></div></div>
+        <div className="metric-tile"><div className="metric-icon"><Package size={17}/></div><div className="metric-copy"><span>Total produk</span><b>{productCount}</b></div></div>
+        <div className="metric-tile"><div className="metric-icon" style={{color:"#B76A0C",background:"#FFF6E7"}}><AlertTriangle size={17}/></div><div className="metric-copy"><span>Stok menipis</span><b>{lowCount}</b></div></div>
+        <div className="metric-tile"><div className="metric-icon" style={{color:"#0F8B6D",background:"#E9FBF6"}}><Wallet size={17}/></div><div className="metric-copy"><span>Nilai Persediaan</span><b>{rupiah(inventoryValue)}</b></div></div>
       </div>
       <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:10,flexWrap:"wrap" }}>
         <div style={{ display:"inline-flex",padding:3,borderRadius:10,background:"#E9EDF3" }}>{[["produk","Daftar Produk"],["riwayat","Riwayat Stok"]].map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{ border:"none",padding:"7px 11px",borderRadius:8,background:tab===k?"#fff":"transparent",boxShadow:tab===k?"0 2px 8px rgba(15,23,42,.06)":"none",fontSize:10.8,fontWeight:750,color:tab===k?"#111827":"#788598",cursor:"pointer" }}>{l}</button>)}</div>
@@ -2366,6 +2771,7 @@ const iconBtn = { background: "#F8FAFC", border: "1px solid #E6EAF0", borderRadi
 
 function ProductModal({ product, onSave, onClose }) {
   const [f, setF] = useState(product || { name: "", category: "aksesoris", sku: "", price: "", cost: "", stock: "", minStock: 3, supplier: "", serial: "", imei: "" });
+  const [saving, setSaving] = useState(false);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const isEdit = !!product;
   const valid =
@@ -2404,7 +2810,25 @@ function ProductModal({ product, onSave, onClose }) {
             <Input value={f.category === "perdana" ? f.serial : f.imei} onChange={(e) => set(f.category === "perdana" ? "serial" : "imei", e.target.value)} />
           </Field>
         )}
-        <Btn disabled={!valid} onClick={() => onSave({ ...f, name:f.name.trim(), price: Number(f.price) || 0, cost: Number(f.cost) || 0, stock: Number(f.stock) || 0, minStock: Number(f.minStock) || 0 })} style={{ justifyContent: "center", marginTop: 6 }}>Simpan</Btn>
+        <Btn
+          disabled={!valid || saving}
+          onClick={async () => {
+            if (saving) return;
+            setSaving(true);
+            const ok = await onSave({
+              ...f,
+              name: f.name.trim(),
+              price: Number(f.price) || 0,
+              cost: Number(f.cost) || 0,
+              stock: Number(f.stock) || 0,
+              minStock: Number(f.minStock) || 0,
+            });
+            if (ok === false) setSaving(false);
+          }}
+          style={{ justifyContent: "center", marginTop: 6 }}
+        >
+          {saving ? "Menyimpan…" : "Simpan"}
+        </Btn>
       </div>
     </Modal>
   );
@@ -2615,6 +3039,11 @@ function Ppob({ showToast, currentUser, isMobile }) {
   }, []);
 
   const submit = async () => {
+    if (!isBrowserOnline()) {
+      showToast("Tidak ada koneksi internet. Transaksi PPOB belum diproses.", "warn");
+      return;
+    }
+
     const cleanTarget = target.trim();
     const amount = Number(nominal);
     const adminFee = Number(fee);
@@ -2650,6 +3079,10 @@ function Ppob({ showToast, currentUser, isMobile }) {
   };
 
   const voidSimulation = async (reason) => {
+    if (!isBrowserOnline()) {
+      showToast("Tidak ada koneksi internet. Pembatalan belum diproses.", "warn");
+      return false;
+    }
     if (!cancelTx) return false;
     const { error } = await supabase.rpc("void_ppob_simulation", {
       p_ppob_id: cancelTx.id,
@@ -2864,6 +3297,10 @@ function Keuangan({ showToast, isMobile, currentUser }) {
   const activeDebtCount = debts.filter((d) => d.status === "belum lunas").length;
 
   const saveTx = async (tx) => {
+    if (!isBrowserOnline()) {
+      showToast("Tidak ada koneksi internet. Transaksi keuangan belum disimpan.", "warn");
+      return false;
+    }
     if (tx.id) {
       const { error } = await supabase.rpc("update_manual_finance_transaction", {
         p_tx_id: tx.id,
@@ -2899,6 +3336,10 @@ function Keuangan({ showToast, isMobile, currentUser }) {
   };
 
   const voidManualTx = async (reason) => {
+    if (!isBrowserOnline()) {
+      showToast("Tidak ada koneksi internet. Pembatalan transaksi belum diproses.", "warn");
+      return false;
+    }
     if (!cancelTx) return false;
     const { error } = await supabase.rpc("void_manual_finance_transaction", {
       p_tx_id: cancelTx.id,
@@ -2914,6 +3355,10 @@ function Keuangan({ showToast, isMobile, currentUser }) {
   };
 
   const addDebt = async (d) => {
+    if (!isBrowserOnline()) {
+      showToast("Tidak ada koneksi internet. Piutang belum disimpan.", "warn");
+      return false;
+    }
     const { error } = await supabase.from("debts").insert({
       customer: d.customer.trim(),
       amount: Number(d.amount),
@@ -2931,6 +3376,10 @@ function Keuangan({ showToast, isMobile, currentUser }) {
   };
 
   const updateDebt = async (d) => {
+    if (!isBrowserOnline()) {
+      showToast("Tidak ada koneksi internet. Perubahan piutang belum disimpan.", "warn");
+      return false;
+    }
     const { error } = await supabase.rpc("update_debt_operational", {
       p_debt_id: d.id,
       p_customer: d.customer.trim(),
@@ -2950,6 +3399,10 @@ function Keuangan({ showToast, isMobile, currentUser }) {
   const saveDebt = async (d) => d.id ? updateDebt(d) : addDebt(d);
 
   const voidDebt = async (reason) => {
+    if (!isBrowserOnline()) {
+      showToast("Tidak ada koneksi internet. Pembatalan piutang belum diproses.", "warn");
+      return false;
+    }
     if (!cancelDebt) return false;
     const { error } = await supabase.rpc("void_debt_operational", {
       p_debt_id: cancelDebt.id,
@@ -2965,6 +3418,10 @@ function Keuangan({ showToast, isMobile, currentUser }) {
   };
 
   const payDebt = async (id, amount) => {
+    if (!isBrowserOnline()) {
+      showToast("Tidak ada koneksi internet. Pembayaran piutang belum diproses.", "warn");
+      return false;
+    }
     const { error } = await supabase.rpc("pay_debt", {
       p_debt_id: id,
       p_amount: Number(amount),
@@ -2979,6 +3436,10 @@ function Keuangan({ showToast, isMobile, currentUser }) {
   };
 
   const undoDebtPayment = async (reason) => {
+    if (!isBrowserOnline()) {
+      showToast("Tidak ada koneksi internet. Pembatalan pembayaran belum diproses.", "warn");
+      return false;
+    }
     if (!undoPaymentTx) return false;
     const { error } = await supabase.rpc("undo_debt_payment", {
       p_finance_tx_id: undoPaymentTx.id,
@@ -3581,6 +4042,10 @@ function Laporan({ isMobile, showToast, currentUser }) {
   };
 
   const voidSale = async (reason) => {
+    if (!isBrowserOnline()) {
+      showToast("Tidak ada koneksi internet. Pembatalan penjualan belum diproses.", "warn");
+      return false;
+    }
     if (!cancelSale) return false;
     const { error } = await supabase.rpc("void_sale_operational", {
       p_sale_id: cancelSale.id,
@@ -3800,6 +4265,9 @@ function Pengguna({ currentUser, showToast, isMobile }) {
   }, []);
 
   const invokeAdminUsers = async (body) => {
+    if (!isBrowserOnline()) {
+      return { ok: false, error: "Tidak ada koneksi internet." };
+    }
     const { data, error } = await supabase.functions.invoke("admin-users", { body });
 
     if (error) {
