@@ -37,6 +37,14 @@ const STORE = {
   address: import.meta.env.VITE_STORE_ADDRESS || "",
 };
 
+const IDLE_TIMEOUT_MINUTES = Math.max(
+  5,
+  Number(import.meta.env.VITE_IDLE_TIMEOUT_MINUTES) || 15,
+);
+const IDLE_TIMEOUT_MS = IDLE_TIMEOUT_MINUTES * 60 * 1000;
+const IDLE_WARNING_MS = 60 * 1000;
+const LAST_ACTIVITY_KEY = "dhellcell_last_activity";
+
 const isBrowserOnline = () =>
   typeof navigator === "undefined" ? true : navigator.onLine;
 
@@ -117,6 +125,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [page, setPage] = useState("dashboard");
   const [toast, setToast] = useState(null);
+  const [loginNotice, setLoginNotice] = useState("");
   const isMobile = useIsMobile();
   const isOnline = useOnlineStatus();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -208,6 +217,110 @@ export default function App() {
     if (!allowed) setPage("dashboard");
   }, [currentUser?.role, page]);
 
+  // Auto logout after inactivity. The last activity timestamp is shared across
+  // tabs in the same browser so one active tab keeps the browser session alive.
+  useEffect(() => {
+    if (!currentUser?.id) return;
+
+    let logoutTimer = null;
+    let warningTimer = null;
+    let lastWrite = 0;
+    let loggingOut = false;
+
+    const readLastActivity = () => {
+      const stored = Number(localStorage.getItem(LAST_ACTIVITY_KEY));
+      return Number.isFinite(stored) && stored > 0 ? stored : Date.now();
+    };
+
+    const writeLastActivity = (ts = Date.now(), force = false) => {
+      if (!force && ts - lastWrite < 5000) return;
+      lastWrite = ts;
+      localStorage.setItem(LAST_ACTIVITY_KEY, String(ts));
+    };
+
+    const clearTimers = () => {
+      if (logoutTimer) clearTimeout(logoutTimer);
+      if (warningTimer) clearTimeout(warningTimer);
+      logoutTimer = null;
+      warningTimer = null;
+    };
+
+    const idleLogout = async () => {
+      if (loggingOut) return;
+      loggingOut = true;
+      clearTimers();
+      setLoginNotice(
+        `Sesi berakhir otomatis setelah ${IDLE_TIMEOUT_MINUTES} menit tanpa aktivitas. Silakan login kembali.`,
+      );
+      localStorage.removeItem(LAST_ACTIVITY_KEY);
+      setCurrentUser(null);
+      await supabase.auth.signOut({ scope: "local" });
+    };
+
+    const scheduleFrom = (lastActivity) => {
+      clearTimers();
+
+      const elapsed = Date.now() - lastActivity;
+      const remaining = IDLE_TIMEOUT_MS - elapsed;
+
+      if (remaining <= 0) {
+        idleLogout();
+        return;
+      }
+
+      if (remaining > IDLE_WARNING_MS) {
+        warningTimer = setTimeout(() => {
+          setToast({
+            msg: "Sesi akan berakhir dalam 1 menit karena tidak ada aktivitas.",
+            type: "warn",
+          });
+          setTimeout(() => setToast(null), 4500);
+        }, remaining - IDLE_WARNING_MS);
+      }
+
+      logoutTimer = setTimeout(idleLogout, remaining);
+    };
+
+    const recordActivity = () => {
+      const now = Date.now();
+      writeLastActivity(now);
+      scheduleFrom(now);
+    };
+
+    const syncActivity = (event) => {
+      if (event.key !== LAST_ACTIVITY_KEY || !event.newValue) return;
+      const ts = Number(event.newValue);
+      if (Number.isFinite(ts)) scheduleFrom(ts);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      scheduleFrom(readLastActivity());
+    };
+
+    const existing = Number(localStorage.getItem(LAST_ACTIVITY_KEY));
+    if (!Number.isFinite(existing) || existing <= 0) {
+      writeLastActivity(Date.now(), true);
+    }
+    scheduleFrom(readLastActivity());
+
+    const activityEvents = ["pointerdown", "keydown", "touchstart", "wheel"];
+    activityEvents.forEach((eventName) =>
+      window.addEventListener(eventName, recordActivity, { passive: true }),
+    );
+    window.addEventListener("storage", syncActivity);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      clearTimers();
+      activityEvents.forEach((eventName) =>
+        window.removeEventListener(eventName, recordActivity),
+      );
+      window.removeEventListener("storage", syncActivity);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [currentUser?.id]);
+
 
   const showToast = (msg, type = "ok") => {
     setToast({ msg, type });
@@ -226,7 +339,7 @@ export default function App() {
     return (
       <>
         <style>{globalCss}</style>
-        <LoginScreen storeName={STORE.name} />
+        <LoginScreen storeName={STORE.name} notice={loginNotice} />
       </>
     );
   }
@@ -286,7 +399,17 @@ export default function App() {
           <b>{currentUser.name}</b>
           <span>{currentUser.role === "owner" ? "Pemilik" : "Karyawan"}</span>
         </div>
-        <button className="icon-ghost-dark" title="Keluar" onClick={() => supabase.auth.signOut({ scope: "local" })}><LogOut size={16} /></button>
+        <button
+          className="icon-ghost-dark"
+          title="Keluar"
+          onClick={() => {
+            localStorage.removeItem(LAST_ACTIVITY_KEY);
+            setLoginNotice("");
+            supabase.auth.signOut({ scope: "local" });
+          }}
+        >
+          <LogOut size={16} />
+        </button>
       </div>
     </>
   );
@@ -2001,6 +2124,26 @@ const globalCss = `
     }
   }
 
+
+  /* ---------- Session security ---------- */
+  .login-session-notice {
+    margin-bottom:2px;
+    padding:10px 11px;
+    border:1px solid #CFE0FF;
+    border-radius:10px;
+    background:#F2F6FF;
+    color:#3D5E9B;
+    font-size:11.5px;
+    line-height:1.5;
+  }
+
+  @media (max-width: 860px) {
+    .login-session-notice {
+      padding:11px 12px;
+      font-size:12px;
+    }
+  }
+
 `
 
 // ---------- shared UI bits ----------
@@ -2055,7 +2198,7 @@ const Badge = ({ children, tone = "slate" }) => {
 };
 
 // ---------- Login ----------
-function LoginScreen({ storeName }) {
+function LoginScreen({ storeName, notice }) {
   const [email, setEmail] = useState("");
   const [p, setP] = useState("");
   const [err, setErr] = useState("");
@@ -2071,6 +2214,9 @@ function LoginScreen({ storeName }) {
       password: p,
     });
     setSubmitting(false);
+    if (!error) {
+      localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
+    }
     if (error) {
       const msg = String(error.message || "");
       setErr(
@@ -2184,6 +2330,12 @@ function LoginScreen({ storeName }) {
                   placeholder="Masukkan password"
                 />
               </Field>
+
+              {notice && !err && (
+                <div className="login-session-notice">
+                  {notice}
+                </div>
+              )}
 
               {err && (
                 <div
